@@ -20,7 +20,10 @@ const ROLES = new Set<TrackerRole>(['standalone', 'server', 'collector']);
 export interface SyncRouterOptions {
   secret: string;
   registry: DeviceRegistry;
-  stores: Record<ProviderId, UsageStore>;
+  stores: Partial<Record<ProviderId, UsageStore>>;
+  validateIdentity?: (body: Record<string, unknown>) => void;
+  usageOnly?: boolean;
+  calendar?: () => {monthStartDay: number};
   /** The server's own device id; a collector may not use it. */
   selfDeviceId: string;
   /** Called after records were stored, so caches and listeners can react. */
@@ -98,10 +101,16 @@ export function createSyncRouter(options: SyncRouterOptions): express.Router {
       response.status(identity.status).json({ error: identity.error });
       return;
     }
+    try { options.validateIdentity?.(body); }
+    catch (error) { response.status(409).json({error: (error as Error).message}); return; }
     const provider = body.provider;
     if (!isProviderId(provider)) {
       response.status(400).json({ error: 'provider must be "codex" or "claude"' });
       return;
+    }
+    if (!options.stores[provider]) { response.status(400).json({error: 'This provider is disabled.'}); return; }
+    if (options.usageOnly && body.records instanceof Array && body.records.some((r: {kind?:string}) => !['event','remove-event','remove-part'].includes(r?.kind ?? ''))) {
+      response.status(400).json({error: 'Only Codex metering events and removals are accepted.'}); return;
     }
     if (!Array.isArray(body.records) || body.records.length > MAX_RECORDS_PER_UPLOAD) {
       response.status(400).json({ error: `records must be an array of at most ${MAX_RECORDS_PER_UPLOAD}` });
@@ -123,7 +132,7 @@ export function createSyncRouter(options: SyncRouterOptions): express.Router {
 
     let acked: number[];
     try {
-      acked = options.stores[provider].ingestRemoteRecords(identity.deviceId, valid).acked;
+      acked = options.stores[provider]!.ingestRemoteRecords(identity.deviceId, valid).acked;
     } catch (error) {
       console.warn(`Could not store an upload from ${identity.deviceId}:`, (error as Error).message);
       response.status(500).json({ error: 'The server could not store this batch; it will be retried.' });
@@ -152,6 +161,8 @@ export function createSyncRouter(options: SyncRouterOptions): express.Router {
       response.status(identity.status).json({ error: identity.error });
       return;
     }
+    try { options.validateIdentity?.(body); }
+    catch (error) { response.status(409).json({error: (error as Error).message}); return; }
     if (!isStatusReport(body.status)) {
       response.status(400).json({ error: 'status is missing or invalid' });
       return;
@@ -162,7 +173,8 @@ export function createSyncRouter(options: SyncRouterOptions): express.Router {
     const result: HeartbeatResponse = {
       ok: true,
       serverInstanceId: options.registry.instanceId,
-      serverTime: serverNow
+      serverTime: serverNow,
+      ...options.calendar?.()
     };
     response.json(result);
   });

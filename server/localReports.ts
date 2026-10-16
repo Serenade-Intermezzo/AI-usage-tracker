@@ -78,6 +78,7 @@ export function createLocalReports(dataDir: string, deviceId: string) {
   let day = 1;
   if (fs.existsSync(settingsFile)) day = validateMonthDay(JSON.parse(fs.readFileSync(settingsFile, 'utf8')).monthStartDay);
   function refresh(): LocalReports {
+    if (fs.existsSync(settingsFile)) day = validateMonthDay(JSON.parse(fs.readFileSync(settingsFile, 'utf8')).monthStartDay);
     const database = new DatabaseSync(path.join(dataDir, 'codex-usage.sqlite'), {readOnly: true});
     let events: ReportEvent[];
     try {

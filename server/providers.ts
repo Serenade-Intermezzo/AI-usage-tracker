@@ -47,6 +47,7 @@ export interface ProviderRuntime {
   watchSessions: boolean;
   /** Record local changes in the outbox for the central server (collectors). */
   outbox: boolean;
+  scanLocal?: boolean;
   /** Device list and the settled-through time for a provider's overview. */
   sync(provider: ProviderId): SyncOverview;
 }

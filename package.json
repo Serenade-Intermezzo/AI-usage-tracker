@@ -1,7 +1,7 @@
 {
   "name": "ai-usage-tracker",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "scripts": {
     "dev": "concurrently -n server,web -c blue,green \"tsx watch server/index.ts\" \"vite\"",
@@ -30,7 +30,7 @@
     "typescript": "^5.9.2",
     "vite": "^7.1.4"
   },
-  "description": "Local AI usage tracker for Codex and Claude Code quota windows, token history, API-equivalent cost, and model efficiency.",
+  "description": "Native Codex GUI/CLI token tracking with account-scoped collection, team membership, multi-device sync and shared weekly/monthly reports.",
   "engines": {
     "node": ">=22.5.0"
   }

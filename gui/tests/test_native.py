@@ -1,5 +1,6 @@
 """Native widget tests against an isolated data fixture, never the user's ledger."""
 import copy
+import base64
 import gc
 from datetime import datetime, timedelta, timezone
 import importlib.util
@@ -49,6 +50,7 @@ class NativeTests(unittest.TestCase):
         cls.settings = Path(cls.directory.name) / 'settings.json'
         cls.settings.write_text('{"day":12}')
         cls.fail_reports = False
+        cls.team_enabled = False
         cls.requests = []
         class Handler(BaseHTTPRequestHandler):
             def log_message(self, *_): pass
@@ -58,6 +60,20 @@ class NativeTests(unittest.TestCase):
                 self.end_headers();self.wfile.write(raw)
             def do_GET(self):
                 cls.requests.append(('GET',self.path))
+                if self.path=='/api/team':
+                    return self.send_json({'enabled':cls.team_enabled,'role':'server' if cls.team_enabled else 'standalone','canManage':cls.team_enabled,
+                                           'members':[{'id':'alice','name':'Alice'},{'id':'bob','name':'Bob'}] if cls.team_enabled else []})
+                if self.path.startswith('/api/team/reports'):
+                    value=reports(json.loads(cls.settings.read_text())['day'])
+                    value.update(scope='team',canEditMonthDay=True,incomplete=True,overview=copy.deepcopy(OVERVIEW),
+                                 members=[{'id':'alice','name':'Alice','week':100,'month':100,'total':100,'devices':2},
+                                          {'id':'bob','name':'Bob','week':200,'month':200,'total':200,'devices':1}],
+                                 devices=[{'deviceId':'a1','memberId':'alice','label':'Ubuntu','online':False,'pending':5,'lastSeenAt':None}])
+                    if 'memberId=alice' in self.path:
+                        value['weekly'][0]['total']=100
+                    return self.send_json(value)
+                if self.path=='/api/installation':
+                    return self.send_json({'role':'standalone','memberId':'owner','memberName':'Me','deviceLabel':'Ubuntu','listenHost':'127.0.0.1'})
                 if self.path=='/api/local-reports':
                     if cls.fail_reports:return self.send_json({'error':'temporary fixture outage'},503)
                     return self.send_json(reports(json.loads(cls.settings.read_text())['day']))
@@ -85,7 +101,7 @@ class NativeTests(unittest.TestCase):
         self.fail('Timed out waiting for native GUI update')
     def window(self):
         w=gui.UsageWindow(self.url);w.show();self.addCleanup(w.close)
-        self.wait_for(lambda:bool(w.reports) and bool(w.overview));w.timer.stop();return w
+        self.wait_for(lambda:bool(w.reports) and (bool(w.overview) or w.reports.get("scope")=="team") and not w.pending_team);w.timer.stop();return w
     def test_native_controls_load_data_and_tabs(self):
         w=self.window()
         self.assertIsInstance(w.report_table,QTableWidget);self.assertIsInstance(w.month_day,gui.FluentComboBox)
@@ -142,6 +158,77 @@ class NativeTests(unittest.TestCase):
         w.refresh();self.wait_for(lambda:not w.pending_reports and not w.pending_overview)
         self.assertFalse(w.request_errors);self.assertNotIn('更新失败',w.hint.text())
         self.assertEqual(w.status.text(),'当前账号 · 仅本机')
+
+    def test_team_scope_person_reports_and_native_member_device_tables(self):
+        type(self).team_enabled=True
+        try:
+            w=self.window()
+            self.wait_for(lambda:w.reports.get('scope')=='team' and not w.pending_reports and not w.pending_team)
+            self.assertEqual(w.scope_id,'all')
+            self.assertTrue(w.manage_button.isEnabled())
+            self.assertFalse(w.chat_tab.isEnabled())
+            self.assertEqual(w.member_table.rowCount(),2)
+            self.assertEqual(w.device_table.item(0,2).text(),'离线')
+            self.assertIn('部分设备',w.hint.text())
+            index=w.scope.findData('alice');self.assertGreater(index,0)
+            w.scope.setCurrentIndex(index)
+            self.wait_for(lambda:w.reports.get('weekly',[{}])[0].get('total')==100)
+            QTest.mouseClick(w.team_tab,Qt.LeftButton)
+            self.assertEqual(w.stack.currentIndex(),3)
+            w.scope.setCurrentIndex(w.scope.findData('local'))
+            self.wait_for(lambda:w.reports.get('scope')!='team' and bool(w.reports))
+            self.assertTrue(w.chat_tab.isEnabled())
+        finally:
+            type(self).team_enabled=False
+
+    def test_connection_dialog_uses_native_configuration_controls(self):
+        d=gui.ConnectionDialog(self.url)
+        self.addCleanup(d.close)
+        self.assertEqual(d.role.currentIndex(),0)
+        d.role.setCurrentIndex(2)
+        self.assertTrue(d.invitation.isEnabled())
+        self.assertFalse(d.lan.isEnabled())
+        d.role.setCurrentIndex(1)
+        self.assertTrue(d.lan.isEnabled())
+        self.assertFalse(d.invitation.isEnabled())
+        self.assertFalse(d.fingerprint.isEnabled())
+        d.scan.setChecked(False)
+        self.assertTrue(d.fingerprint.isEnabled())
+
+    def test_collector_calendar_is_readonly_and_updates_even_with_an_old_draft(self):
+        w=self.window()
+        w.month_day.setCurrentIndex(15)
+        data=reports(12);data['canEditMonthDay']=False
+        w.update_reports(data)
+        self.assertEqual(w.month_day.currentIndex(),11)
+        self.assertFalse(w.month_day.isEnabled())
+        self.assertFalse(w.save_button.isEnabled())
+
+    def test_native_connection_dialog_submits_member_invitation(self):
+        invitation={'version':1,'memberId':'member-1','memberName':'测试成员','centralUrl':'http://hub:8893',
+                    'secret':'synthetic-private-test-key','accountFingerprint':'a'*64}
+        code=base64.urlsafe_b64encode(json.dumps(invitation).encode()).decode().rstrip('=')
+        profile={'role':'standalone','memberId':'local','memberName':'Me','deviceLabel':'Ubuntu','listenHost':'127.0.0.1'}
+        with patch('gui.team.api',side_effect=[profile,{'ok':True}]) as calls:
+            d=gui.ConnectionDialog(self.url);self.addCleanup(d.close)
+            d.role.setCurrentIndex(2);d.invitation.setPlainText(code);d.device.setText('Windows laptop')
+            d.save()
+            saved=calls.call_args.args[2]
+            self.assertEqual(saved['memberId'],'member-1')
+            self.assertEqual(saved['memberName'],'测试成员')
+            self.assertEqual(saved['deviceLabel'],'Windows laptop')
+            self.assertEqual(saved['role'],'collector')
+            self.assertEqual(d.result(),d.Accepted)
+
+    def test_native_member_manager_generates_selected_person_invitation(self):
+        fixture={'members':[{'id':'alice','name':'Alice'},{'id':'bob','name':'Bob'}]}
+        with patch('gui.team.api',side_effect=[fixture,{'invitation':'synthetic-invitation'}]) as calls:
+            d=gui.MembersDialog(self.url);self.addCleanup(d.close)
+            d.members.setCurrentIndex(d.members.findData('bob'))
+            d.address.setText('http://192.168.1.10:8893');d.copy_invitation()
+            self.assertIn('memberId=bob',calls.call_args.args[1])
+            self.assertEqual(d.code.toPlainText(),'synthetic-invitation')
+            self.assertEqual(APP.clipboard().text(),'synthetic-invitation')
 
 
 class EnvironmentTests(unittest.TestCase):

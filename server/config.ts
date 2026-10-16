@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { readInstallation } from './installation.js';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -50,6 +51,11 @@ export interface TrackerConfig {
   /** Poll account-level quota, account details, and cloud tasks. */
   quotaPolling: boolean;
   sync: SyncSettings;
+  memberId: string;
+  memberName: string;
+  scanLocal: boolean;
+  accountFingerprint: string | null;
+  listenHost: string;
 }
 
 export class ConfigError extends Error {
@@ -109,6 +115,7 @@ function normalizeUrl(value: string | undefined): string | null {
   } catch {
     throw new ConfigError(`CENTRAL_URL is not a valid URL: "${trimmed}".`);
   }
+  if (url.username || url.password || url.search || url.hash || url.pathname !== '/') throw new ConfigError('CENTRAL_URL must be an origin without credentials, path, query or fragment.');
   if (url.protocol !== 'http:' && url.protocol !== 'https:') {
     throw new ConfigError(`CENTRAL_URL must start with http:// or https:// (got "${trimmed}").`);
   }
@@ -117,10 +124,15 @@ function normalizeUrl(value: string | undefined): string | null {
 
 /**
  * Read the role, device identity, and sync settings from the environment. The
- * device id defaults to the hostname and is remembered in `<data>/device.json`,
+ * device id defaults to the hostname plus a random suffix and is remembered in `<data>/device.json`,
  * so renaming the machine later does not split its history.
  */
 export function loadTrackerConfig(env: NodeJS.ProcessEnv = process.env): TrackerConfig {
+  const initialDir = path.resolve(env.DATA_DIR?.trim() || path.join(process.cwd(), 'data'));
+  const saved = readInstallation(initialDir);
+  if (saved) env = {...env, TRACKER_ROLE: saved.role, MEMBER_ID: saved.memberId, MEMBER_NAME: saved.memberName,
+    DEVICE_LABEL: saved.deviceLabel, CENTRAL_URL: saved.centralUrl ?? '', SYNC_SECRET: saved.secret ?? '',
+    HOST: saved.listenHost, CODEX_SCAN: String(saved.scanLocal), TEAM_ACCOUNT_FINGERPRINT: saved.accountFingerprint ?? ''};
   const rawRole = (env.TRACKER_ROLE ?? '').trim().toLowerCase() || 'standalone';
   if (!TRACKER_ROLES.includes(rawRole as TrackerRole)) {
     throw new ConfigError(`TRACKER_ROLE must be standalone, server, or collector (got "${env.TRACKER_ROLE}").`);
@@ -138,7 +150,7 @@ export function loadTrackerConfig(env: NodeJS.ProcessEnv = process.env): Tracker
   }
   const identityFile = path.join(dataDir, 'device.json');
   const stored = readIdentity(identityFile);
-  const deviceId = configuredId || stored?.deviceId || slugDeviceId(os.hostname());
+  const deviceId = configuredId || stored?.deviceId || `${slugDeviceId(os.hostname()).slice(0, 50)}-${crypto.randomUUID().slice(0, 8)}`;
   const installId = stored?.installId ?? crypto.randomUUID();
   if (!stored || stored.deviceId !== deviceId) {
     const identity: DeviceIdentityFile = {
@@ -167,6 +179,11 @@ export function loadTrackerConfig(env: NodeJS.ProcessEnv = process.env): Tracker
     dataDir,
     watchSessions: flagEnv(env, 'WATCH_SESSIONS', true),
     quotaPolling: flagEnv(env, 'QUOTA_POLLING', role !== 'collector'),
+    memberId: env.MEMBER_ID?.trim() || 'owner',
+    memberName: env.MEMBER_NAME?.trim() || '本机用户',
+    scanLocal: flagEnv(env, 'CODEX_SCAN', true),
+    accountFingerprint: env.TEAM_ACCOUNT_FINGERPRINT?.trim() || null,
+    listenHost: env.HOST?.trim() || '127.0.0.1',
     sync: {
       centralUrl,
       secret,

@@ -5,7 +5,7 @@ Set-Location $trackerRoot
 $nodeCommand = Get-Command node -ErrorAction SilentlyContinue
 $npmCommand = Get-Command npm.cmd -ErrorAction SilentlyContinue
 if (-not $nodeCommand -or -not $npmCommand) { throw 'Install Node.js 22.5+ (LTS) first, then rerun this installer.' }
-& $nodeCommand.Source -e 'const [a,b]=process.versions.node.split(".").map(Number); process.exit(a>22 || a===22&&b>=5 ? 0 : 1)'
+& $nodeCommand.Source -e 'const [a,b]=process.versions.node.split(/\./).map(Number); process.exit(a>22 || a===22&&b>=5 ? 0 : 1)'
 if ($LASTEXITCODE -ne 0) { throw 'Node.js 22.5 or newer is required.' }
 $trackerPython = $null
 $trackerPythonArgs = @()

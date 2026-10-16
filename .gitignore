@@ -14,3 +14,17 @@ __pycache__/
 # Local installation metadata and generated snapshot
 INSTALL_PROVENANCE.json
 ubuntu-local.patch
+
+# Private metering/configuration files, including custom in-repo data folders
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+installation.json
+account-scope.json
+device.json
+report-settings.json
+team-calendar.json
+local-reports.json
+team-reports.json
+.env.*
+!.env.example

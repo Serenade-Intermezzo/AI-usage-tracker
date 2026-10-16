@@ -20,6 +20,11 @@ export interface SyncSource {
 
 export interface SyncClientOptions {
   centralUrl: string;
+  memberId?: string;
+  accountFingerprint?: string;
+  usageOnly?: boolean;
+  onCalendar?: (day: number) => void;
+  readyToSync?: () => boolean;
   secret: string;
   deviceId: string;
   deviceLabel: string;
@@ -167,6 +172,8 @@ export function createSyncClient(options: SyncClientOptions) {
       protocol: SYNC_PROTOCOL_VERSION,
       deviceId: options.deviceId,
       deviceLabel: options.deviceLabel,
+      memberId: options.memberId,
+      accountFingerprint: options.accountFingerprint,
       installId: options.installId
     };
   }
@@ -178,6 +185,7 @@ export function createSyncClient(options: SyncClientOptions) {
   function noteServer(instanceId: string): boolean {
     serverInstanceId = instanceId;
     let exported = false;
+    if (options.readyToSync && !options.readyToSync()) return false;
     for (const source of options.sources) {
       if (source.store.exportedToInstance() === instanceId) continue;
       const queued = source.store.exportAllToOutbox(instanceId);
@@ -192,13 +200,20 @@ export function createSyncClient(options: SyncClientOptions) {
   async function heartbeat(): Promise<void> {
     const request: HeartbeatRequest = { ...identity(), status: statusReport() };
     const response = await post<HeartbeatResponse>('/api/sync/heartbeat', request);
+    if (response.monthStartDay !== undefined) options.onCalendar?.(response.monthStartDay);
     noteServer(response.serverInstanceId);
   }
 
   async function drain(source: SyncSource): Promise<number> {
     let uploaded = 0;
     while (!stopped) {
-      const records = source.store.readOutbox(options.batchSize);
+      const pending = source.store.readOutbox(options.batchSize);
+      // Descriptive records stay local; the team hub only needs meter events.
+      const allowed = new Set(['event', 'remove-event', 'remove-part']);
+      const ignored = options.usageOnly ? pending.filter(r => !allowed.has(r.kind)) : [];
+      if (ignored.length) source.store.ackOutbox(ignored.map(r => r.seq));
+      const records = options.usageOnly ? pending.filter(r => allowed.has(r.kind)) : pending;
+      if (!records.length && ignored.length) continue;
       if (records.length === 0) break;
       const request: UploadRequest = { ...identity(), provider: source.provider, records };
       const response = await post<UploadResponse>('/api/sync/upload', request);
@@ -274,6 +289,7 @@ export function createSyncClient(options: SyncClientOptions) {
         // Learn which server this is first, so a new one gets our full history.
         await heartbeat();
         markConnected();
+        if (options.readyToSync && !options.readyToSync()) { state = 'starting'; return true; }
         do {
           again = false;
           for (const source of options.sources) await drain(source);

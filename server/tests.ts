@@ -22,3 +22,5 @@ import './localReports.test.js';
 import './codex/accountScope.test.js';
 
 import './chartTimezone.test.js';
+
+import './team.test.js';

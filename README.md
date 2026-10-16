@@ -1,300 +1,210 @@
-# Codex Usage Tracker
+# Codex 用量统计
 
-用于统计 Codex Token 用量的原生桌面工具。界面采用 Qt / QFluentWidgets，图表由 Qt Charts 和本地绘图控件绘制，不使用浏览器或 WebView。
+为多人共用同一个 OpenAI 账号提供的原生桌面用量工具。每台电脑只采集自己的 Codex GUI / CLI 日志，再将计量事件上传到一个汇总中心，按成员和全体生成周报、月报。
 
-**项目目标：让共用同一个 OpenAI 账号的多位成员，在 Windows、Ubuntu 及其他 Linux 系统上分别采集自己的用量，并统一查看每位成员及全体成员的 Token 汇总。**
+界面使用 **Qt Widgets + QFluentWidgets + Qt Charts** 在本地绘制，保留较大的字体、圆角卡片和本地图表，无需浏览器或 WebView。后台通过本机 HTTP 接口与原生界面通信；界面不使用网页渲染。
 
-**当前状态：已实现单机原生统计；完整的多人汇总尚未实现。保留的同步模块目前有入口启动故障，不能按“多人版已可用”部署。**
+- 本 fork：<https://github.com/Serenade-Intermezzo/AI-usage-tracker>
+- 原始项目：<https://github.com/Danielw412/AI-usage-tracker>
+- 原生多人版：**0.2.0**。
 
-本文描述本地定制版，审查日期为 2026-10-16。本分支保留原生 GUI、当前账号范围筛选和本机周月报的实现，作为后续多人功能开发的基线。
+## 能做什么
 
-- Fork：<https://github.com/Serenade-Intermezzo/AI-usage-tracker>
-- 上游：<https://github.com/Danielw412/AI-usage-tracker>
-- 当前统计对象：Codex GUI / CLI 中可确认属于指定 OpenAI 登录账号的本机记录。
-- Claude Code、第三方 API 服务和其他账号的用量不纳入本版统计。
-
-## 1. 多人使用的目标与当前差距
-
-“同一个 OpenAI 账号”“某位使用者”“一台设备”是三种不同的身份：
-
-- **账号**决定哪些 Codex 请求属于统计范围。
-- **成员**决定用量归到谁名下，必须由软件单独登记，不能从共用的 OpenAI 登录账号推断。
-- **设备**决定记录从哪里采集；一个成员可以有多台设备，也可能使用不同操作系统。
-
-目标是按 `账号 → 成员 → 设备 → Token 事件` 组织记录。同一成员的 Windows 电脑和 Linux 电脑应合并到该成员名下；全体总量应来自去重后的事件集合。
-
-| 要求 | 当前状态 |
+| 功能 | 行为 |
 | --- | --- |
-| 本机 Codex GUI / CLI 日志采集 | 已实现 |
-| 绑定指定 OpenAI 账号并排除其他来源 | 已实现，但历史归属和监测中断有限制 |
-| 原生 GUI、每日用量、活跃热力图、模型图表 | 已实现 |
-| 本机周报、月报、可调整月度起始日 | 已实现 |
-| Ubuntu 上实际运行 | 已验证 |
-| 其他 Linux 发行版 | 有 Linux 运行路径，尚未逐发行版验证 |
-| Windows 原生 GUI 与安装启动脚本 | 已准备，尚未 Windows 实机验证 |
-| 成员登记、一个成员关联多台设备 | 未实现 |
-| 成员用量、全员用量及相应周报/月报 | 未实现 |
-| 多人汇总的统一月度周期 | 未实现；当前设置只保存在各自本机 |
-| 多设备上传、断网队列、事件去重 | 保留上游模块，组件测试通过；当前应用入口集成存在阻塞 |
-| 中央端校验上传记录属于指定 OpenAI 账号 | 当前协议没有账号指纹字段，尚未实现 |
-| 原生 GUI 中配置汇总中心、查看人员及同步状态 | 未实现 |
+| 成员与设备 | 汇总中心登记成员，一个成员可关联多台 Windows / Ubuntu / Linux 设备 |
+| 个人及全员报表 | 原生界面可切换本机、全体成员或指定成员，查看累计、本周、本月以及历史周月报 |
+| 月度周期 | 汇总中心统一设置每月 1–31 日起算，采集设备自动同步，不能各自修改 |
+| 跨设备同步 | 持久化待上传队列，断网保留、恢复补传；按稳定事件标识去重 |
+| 图表 | 日用量、星期 / 小时热力图、模型 Token 构成，跟随报表成员范围变化 |
+| 同步状态 | 查看成员的设备数、设备在线状态、待上传数量和最近联系时间 |
+| 账号范围 | 仅采集绑定 OpenAI 账号的官方 Codex GUI / CLI 可确认事件，汇总中心校验账号指纹 |
+| 数据范围 | 不启用 Claude Code、不查询账号全局用量，不默认上传聊天正文、标题或项目路径 |
 
-把当前程序分别安装到几个人的电脑上，只会得到几套各自独立的统计，**不会自动形成“所有人的用量”看板**。
+原生界面的“聊天明细”只在选择“本机”时显示。团队视图只展示计量信息。
 
-## 2. 当前审查发现
+## 多人使用流程
 
-### 2.1 `server` / `collector` 模式启动失败
+选择一台经常开机的电脑作为汇总中心，其他电脑作为采集设备。汇总中心也可以同时采集本机用量；不采集本机时可作为独立服务器。
 
-当前入口停用了 Claude，但同步初始化仍读取全部 provider 的数据库：
+### 1. 在汇总中心建立团队
 
-- `server/index.ts` 初始化 collector 时，遍历所有 provider 并访问 `provider.store`。
-- `server/index.ts` 初始化中央端时，仍读取 `providers.claude.store`。
-- `server/disabledClaude.ts` 中，被停用的 Claude provider 的 `store` getter 会直接抛错。
+1. 安装程序并在 Codex 中登录要统计的 OpenAI 账号。
+2. 打开原生界面右上角的 **设置**，工作方式选择 **作为汇总中心**。
+3. 填写本机使用者的姓名 / 昵称和设备名称。
+4. 需要其他电脑连接时，勾选 **允许其他设备连接此汇总中心**。默认只监听本机。
+5. 保存并等待后台自动重启。
+6. 打开 **成员与设备 → 管理成员**，为每位使用者添加成员。
 
-使用临时数据目录分别启动两个角色，均复现：
+同一账号不等于同一成员。成员身份由这里的登记和设备关联确定，无法从共用的 OpenAI 登录信息自动识别实际使用者。
 
-```text
-TRACKER_ROLE=server     → exit 1
-TRACKER_ROLE=collector  → exit 1
-Error: Claude Code is disabled in this installation
-```
+### 2. 为每个人生成接入配置
 
-复现没有修改实际运行的单机服务。修复应覆盖 provider 枚举、同步服务支持的 provider 集合以及真实入口启动测试，不能只把异常隐藏掉。
-
-**目前不要依据上游 README 的多人部署步骤直接启用这两种角色。**
-
-### 2.2 设备标识不能替代成员标识
-
-目前配置和上传协议包含 `deviceId`、`deviceLabel`、`installId`，没有独立的 `memberId`，也没有成员与设备的映射。
-
-设备名称即使写成某个人的名字，也不能处理一人多机、设备转交和成员筛选；共用的 OpenAI 账号标识也不能区分不同的人。未来添加成员字段后，仍不能自动推断旧记录由谁使用；历史归属需要明确的设备所有者或补录证据，并保留归属变更记录。
-
-### 2.3 周报与月报只查询当前设备
-
-`server/localReports.ts` 使用以下条件读取事件：
-
-```sql
-WHERE device_id = ?
-```
-
-其参数是本机设备 ID。因此，即使后续恢复上传，当前报表也不会自动变成全员报表。需要增加按成员、按设备以及全体的明确查询范围，并共享同一套周期规则。
-
-### 2.4 Windows 启动路径仍固定为单机
-
-`gui/main.py` 中的 `windows_backend_environment()` 固定设置：
+在成员管理中选择一个成员，填写其他设备可以访问的汇总中心地址，例如：
 
 ```text
-TRACKER_ROLE=standalone
-HOST=127.0.0.1
+http://192.168.1.10:8893
 ```
 
-原生 GUI 目前没有成员登记、汇总中心地址或同步配置入口。单独修改 Windows 源码目录里的 `.env`，不能把这一启动流程变成已验证的多人客户端。
+点击 **生成并复制此成员的接入配置**。这份配置包含该成员编号、目标账号指纹、中心地址和团队访问密钥。**只私下发送给对应成员，不要放进公开仓库、截图或日志。**
 
-### 2.5 原同步协议不等于最小化的 Token 汇总协议
+同一人的多台电脑使用同一份成员接入配置；每台电脑会保留独立设备编号。不要在不同电脑之间复制整个数据目录或 `device.json`。
 
-保留的上游协议除了 Token 事件，还支持同步聊天标题、提示词内容、项目路径等描述性记录；它也没有当前定制版的账号指纹校验字段。
+局域网中需允许该端口通过汇总端防火墙。跨公网使用 HTTPS 或可信 VPN；程序本身不配置 TLS、路由器端口转发或公网服务器。
 
-如果目标只是统计每个人用了多少 Token，多人版应默认只上传必要的计量字段，明确成员身份和账号范围。是否共享聊天内容应是另一项明确选择，不应随着用量同步默认发生。
+### 3. 在各台设备接入
 
-## 3. 当前单机版的功能
+1. 在该设备自己的 Codex GUI / CLI 中，通过同一个 OpenAI 账号登录。
+2. 安装并打开原生界面，进入 **设置 → 加入汇总中心**。
+3. 粘贴这个人的接入配置，填写设备名称，保存并等待后台重启。
+4. 右上角范围菜单可选择 **本机 / 全体成员 / 某位成员**。
+5. 在“成员与设备”检查设备是否已联系中心、是否还有待上传记录。
 
-### 用量报表
+设备首次登记后，成员编号与安装实例保持固定，避免重复设备编号或更换成员时悄悄改写历史归属。需要修改人的显示名称，请在汇总中心使用“修改姓名”；历史会保留在原成员编号下。暂不提供已有设备历史的跨成员转移功能。
 
-- 当前账号在本机的累计、本周和本月 Token。
-- 周报按北京时间周一 00:00 至下周一 00:00 统计。
-- 月度起始日可选择每月 **1–31 日**，点击“保存”后立即重算历史月报。
-- 短月份没有所选日期时，使用当月最后一天；下个月继续按原设置计算。
-- 周期未结束显示“进行中”，结束后显示“已结束”。
-- 后台每分钟检查并保存汇总；GUI 关闭后后台仍可继续运行。
+### 4. 统一设置月度起始日
 
-### 图表与明细
+在**汇总中心本机**的原生界面中选择“月度起始日”，点击保存。
 
-- 最近 14 天每日 Token 柱状图。
-- 最近 30 天按星期和小时绘制的活跃热力图。
-- 各模型的缓存输入、新增输入和输出构成。
-- 本机聊天的入口、模型和 Token 明细。
-- 原生控件使用统一字体、大字号和圆角界面。
+- 所有人使用同一个起始日，采集设备的日期控件只读。
+- 修改后重新计算历史月报；周报不受影响。
+- 采集设备通过心跳取得最新设置，即使没有打开团队报表也会更新。
+- 中心离线时，本机月报沿用最后收到的日期，恢复连接后更新。
+- 选择 29、30 或 31 日而当月没有该日期时，使用当月最后一天。
 
-本机已保存的月度起始日以界面为准；它目前不是全员共享的设置。
+所有报表统一使用 **Asia/Shanghai（北京时间，UTC+8）**，不随设备系统时区变化。周报按周一 00:00 至下周一 00:00，月报按配置日期的 00:00 分界。
 
-## 4. 统计含义和完整性
+后台每分钟保存一次报表快照，跨周、跨月后自动标记已结束；关机后再次启动会补算。离线事件到达后，历史周期也会更新，避免把“周期已结束”误认为“所有设备都已完整上传”。
+
+## 统计范围与覆盖限制
 
 ### 账号范围
 
-本版读取 Codex 已保存的非秘密账号标识，并以 SHA-256 指纹绑定统计目标；不要求在软件中重新填写账号密码，也不把 OpenAI 登录令牌上传到汇总端。
+统计来自本机日志，不读取共享账号的全局用量接口。采集端只接受官方 OpenAI provider 和 Codex GUI / CLI 入口，包括可确认的子代理调用。
 
-只计入官方 OpenAI provider、指定账号以及 Codex GUI / CLI 来源。与这些入口关联的子任务可纳入其用量。
+- 首次运行将目标账号的非密钥标识做 SHA256，保存为本机账号绑定。
+- 带明确账号标识的历史日志，仅在账号匹配时纳入。
+- 不带账号标识的事件，仅在后台实际观察到该账号登录的时段纳入。
+- 后台停止期间的无账号标记历史不推定归属；其他账号、第三方 API 和不符合入口范围的记录排除。
+- 汇总中心固定目标账号指纹，拒绝范围不一致的上传。
 
-### 历史记录和中断
+账号指纹用于范围一致性校验，不是密码或访问令牌。成员身份仍以设备登记为准；该工具不能从共享账号中辨认谁实际操作了键盘，也不提供对采集端日志的第三方计费认证。
 
-- 部分旧日志没有账号标识，不能凭“现在登录了某个账号”推断过去也属于该账号。
-- 可确认账号标记的旧记录与已观察到匹配登录时段内的新记录，按代码中的筛选规则计入。
-- 监测启用后的新记录需要落在已观察到的匹配登录时段；后台未运行的时段可能漏计，即使原日志文件仍存在，也不能承诺全部补齐。
-- 未确认记录不混入正式统计，可在界面底部展开查看其范围说明。
+如果旧版数据库尚未建立账号绑定，首次启用范围筛选时会将旧数据库保存到数据目录的 `unscoped-backup-*`，再从符合条件的日志重建；不把旧的未筛选缓存直接上传。
 
-因此，当前累计量表示“本机可确认记录的合计”，不能标成共享账号的完整总用量。未来的全员汇总也必须展示参与设备、最后同步时间和未覆盖范围，不能把缺失数据当成零。
+### Token 口径
 
-### Token 计算
+- 总 Token 使用日志记录的 `total_tokens`，输入已包含缓存输入，避免重复加算。
+- 聊天数按周期内不同线程计数；模型图基于相同范围的事件。
+- 重试和完整历史重传不会重复计数。同一份日志复制到不同设备时，相同事件只计一次，归属首次收到该事件的设备。
+- 这不是 OpenAI 官方账单，也不代表未安装本工具、未接入团队或未上传设备的用量。
 
-- 缓存输入属于输入 Token 的一部分，不应再次加到输入上。
-- 按日志记录的实际发生时间归入周期，不按上传时间归入。
-- 月报直接按日期范围汇总事件，不把跨月的一整周周报直接相加。
-- 周报、月报中的聊天数分别去重，不能用各周聊天数简单相加代表月度独立聊天数。
-- Token 统计与共享账号的额度百分比是不同指标；当前原生版不轮询账号额度，也不据额度变化猜测各人的用量。
+有设备离线、尚有待上传记录、首次扫描未完成时，界面会提示当前只显示已收到的用量。周期结束后仍可能继续补传。未知或尚未关联成员的历史事件会单独提示，不默认为某个人。
 
-## 5. 安装与运行：当前单机模式
+### 访问权限与隐私
 
-要求：Node.js **22.5+**、Python **3.10+**；Python GUI 依赖见 `gui/requirements.txt`。
+- 团队密钥用于设备上传和团队计量报表读取；团队成员可以查看个人及全体统计。
+- 成员管理、接入配置生成和月度设置修改仅在中心本机原生界面进行。
+- 远程接口不提供本机聊天明细、个人配置或登录文件。
+- 同步仅发送 Token 事件、稳定标识、模型、时间及必要删除记录；正文、聊天标题、项目路径和额度样本不上传。
+- 密钥保存在设备自己的 `installation.json`，默认按用户私有权限写入；Windows 还依赖用户资料目录的 ACL。
+- 不修改 Codex 登录状态，也不复制 `auth.json` 到源码、发布包或团队中心。
 
-以下步骤针对本 fork 中包含 `gui/main.py` 的原生版源码。
+## 安装
 
-### Ubuntu / Linux
-
-本机已安装的版本可从应用列表打开 **“Codex 用量统计”**。
-
-在新的源码目录中准备依赖：
-
-```bash
-npm ci --ignore-scripts --no-audit --no-fund
-npm run build:native
-python3 -m venv .venv-gui
-.venv-gui/bin/python -m pip install -r gui/requirements.txt
-```
-
-创建 `.env`，示例为单机统计配置：
-
-```dotenv
-TRACKER_ROLE=standalone
-LOCAL_ONLY=true
-NATIVE_GUI_ONLY=true
-CODEX_ACCOUNT_SCOPE=true
-CODEX=true
-CLAUDE_CODE=false
-DEFAULT_PROVIDER=codex
-QUOTA_POLLING=false
-CLOUD_TASKS=false
-WATCH_SESSIONS=true
-HOST=127.0.0.1
-PORT=8893
-DATA_DIR=./data-current-account
-```
-
-Codex 日志默认从 `~/.codex` 读取。若桌面端使用独立的 `~/.codex-desktop`，应在 `.env` 中将 `CODEX_HOME` 设置为该目录的实际绝对路径，将 `CODEX_EXTRA_HOMES` 设置为 CLI 目录的实际绝对路径。多个额外目录使用本系统的路径分隔符分隔：Linux 为 `:`，Windows 为 `;`。
-
-在使用 systemd 用户服务的 Linux 上：
-
-```bash
-bash scripts/install-linux-service.sh
-bash scripts/open-local-gui.sh
-```
-
-查看后台状态与日志：
-
-```bash
-systemctl --user status ai-usage-tracker
-journalctl --user -u ai-usage-tracker -n 50 --no-pager
-```
-
-Ubuntu 属于 Linux。当前实际验证的是这台 Ubuntu；其他 Linux 发行版还需确认 Qt 平台库、Python 依赖和服务管理方式。没有 systemd 的系统不能直接套用上述服务安装脚本。
+需要 Node.js **22.5+**、Python **3.10+**。建议使用当前 Node 22 LTS 与 Python 3.11；GUI 依赖见 `gui/requirements.txt`。
 
 ### Windows 10 / 11 x64
 
-1. 安装 Python 3.10+ 与 Node.js 22.5+。
-2. 在该电脑的 Codex Desktop 或 CLI 中通过目标 OpenAI 账号登录。
-3. 将本地定制版源码安装包完整解压到固定目录。
-4. 首次双击 `scripts\install-native-windows.cmd`。
-5. 之后使用桌面上的 **Codex Usage Tracker** 快捷方式，或 `scripts\start-native-gui.cmd`。
+1. 安装 Node.js 和 Python，确保可以从终端启动。
+2. 在本机 Codex GUI / CLI 中通过目标 OpenAI 账号登录。
+3. 下载或 clone 本 fork，完整解压到固定目录。
+4. 双击 `scripts\install-native-windows.cmd`，等待依赖安装与后台构建完成。
+5. 使用桌面的 **Codex Usage Tracker** 快捷方式打开界面。
 
-首次安装会联网下载 GUI 和后台依赖。安装器会创建桌面快捷方式及登录后后台采集快捷方式；移动源码目录后需要重新安装快捷方式。
+首次安装需联网。安装器会创建 GUI 快捷方式和登录时启动后台的快捷方式；关闭窗口不停止后台采集。移动源码目录后需重新安装快捷方式。
 
-Windows 数据存放在：
+数据保存在：
 
 ```text
 %LOCALAPPDATA%\CodexUsageTracker\data-current-account
 ```
 
-**Windows 的兼容代码和安装脚本已准备；当前没有 Windows 实机验证结果。源码安装包也不等于已经验证的独立 EXE。**
+要关闭登录后启动，可在 `shell:startup` 中删除“Codex Usage Background”。这是源码安装方式，不是独立 EXE。
 
-## 6. 数据、配置和源码位置
+### Ubuntu / 其他桌面 Linux
 
-项目结构：
-
-```text
-gui/
-  main.py                  原生窗口、图表入口、日期设置和本机后台启动
-  charts.py                Qt 每日图、模型图及热力图
-  tests/                   原生 GUI 与环境测试
-server/
-  index.ts                 后台入口与数据接口
-  codex/accountScope.ts    当前账号与日志来源筛选
-  localReports.ts          当前设备周报、月报
-  sync/                    保留的跨设备同步模块；入口集成待修复
-scripts/
-  open-local-gui.sh         Linux 原生 GUI 入口
-  install-linux-service.sh Linux 用户服务安装
-  install-native-windows.* Windows 原生版安装
-  start-native-gui.*       Windows 原生 GUI 启动
-.github/workflows/
-  native-gui.yml           已准备的 Ubuntu / Windows 检查配置
-```
-
-当前 Ubuntu 安装约定：
-
-```text
-源码与程序目录：$HOME/.local/share/ai-usage-tracker
-当前账号数据：  <项目目录>/data-current-account/
-月度设置：      <数据目录>/report-settings.json
-报表快照：      <数据目录>/local-reports.json
-账号范围：      <数据目录>/account-scope.json
-旧未筛选数据：  <项目目录>/data/，不参与当前统计
-GUI 隔离环境：  <项目目录>/.venv-gui/
-```
-
-备份和更新时应保留本机配置、设备标识、账号范围和数据库。不要把 `.env`、`auth.json`、数据库、会话日志或 GUI 虚拟环境提交到公共仓库。
-
-本地源码目录已接入 Git，并保留上游提交历史；`origin` 指向本 fork。配置、数据库和虚拟环境保存在忽略列表中，不参与提交。更新远端需要显式提交和推送。
-
-## 7. 面向多人版的下一步
-
-以下是待实现的目标架构，不是现有部署功能：
-
-```text
-成员 A · Ubuntu GUI/CLI ─┐
-成员 A · Windows GUI/CLI ├─ 本地采集与账号筛选 ─→ 汇总端 ─→ 原生 GUI
-成员 B · Linux GUI/CLI ──┘                         │        ├─ 全员汇总
-                                                  │        ├─ 按成员查看
-                                                  └────────└─ 按设备查看
-```
-
-实现顺序：
-
-1. **恢复 Codex-only 同步入口。** 修复停用 Claude 后的数据库访问，并对 `server`、`collector` 两种真实启动入口做测试。
-2. **加入成员和设备关系。** 独立登记 `memberId` / 显示名称，让一个成员关联多个稳定设备 ID；同一台电脑由多人共用时，需要明确的用户档案或切换规则。
-3. **统一账号范围和最小同步协议。** 中央端登记目标账号指纹、校验上传来源；默认只同步计量所需信息，不默认上传提示词正文和完整项目路径。
-4. **实现人员与全员报表。** 按成员、设备或全体查询相同事件集合；由汇总端统一管理月度起始日和时区，更新后重算相应报表。
-5. **增加原生 GUI 配置和同步状态。** 可配置人员、设备和汇总端，显示待上传数量、最后同步时间及未覆盖范围；多人数据的读取和设置变更需要明确权限。
-6. **完成真实跨系统验证。** 至少覆盖 Windows + Ubuntu/Linux、同一人多设备、不同成员、断网重试、迟到记录和日志复制后的去重。
-
-多人版的验收应以“每个人分别能查到自己的记录，并且所有人的去重合计与全员汇总一致”为准，而不能以几个单元测试通过或几个客户端窗口能打开代替。
-
-## 8. 测试与验证边界
-
-后台测试：
+Ubuntu 示例；其他 Linux 发行版使用对应包管理器准备 Python venv 和 Qt 所需桌面库。
 
 ```bash
-npm test
+git clone https://github.com/Serenade-Intermezzo/AI-usage-tracker.git
+cd AI-usage-tracker
+cp .env.example .env
+npm ci --ignore-scripts --no-audit --no-fund
 npm run build:native
-npm run typecheck
+python3 -m venv .venv-gui
+.venv-gui/bin/python -m pip install -r gui/requirements.txt
+bash scripts/install-linux-service.sh
+bash scripts/open-local-gui.sh
 ```
 
-原生 GUI 测试：
+需要先安装 Node.js 22.5+；Ubuntu 若缺少 venv / Qt 桌面库，可安装 `python3-venv libxcb-xinerama0 libxcb-cursor0 libegl1`。后台运行在当前用户的 systemd 服务中，不需要管理员账户读取其他人的会话。
+
+默认数据目录为源码目录下的 `data/`；可在 `.env` 中配置 `DATA_DIR`。程序自动发现当前用户的 `.codex-desktop` 和 `.codex`，也可通过 `CODEX_HOME` / `CODEX_EXTRA_HOMES` 指定。后者的分隔符在 Linux 为冒号、Windows 为分号。
 
 ```bash
+systemctl --user status ai-usage-tracker
+systemctl --user restart ai-usage-tracker
+systemctl --user disable --now ai-usage-tracker
+```
+
+### 无本机采集的中心
+
+可在设置中选择“作为汇总中心”，关闭“同时采集这台电脑的 Codex 用量”，填入目标账号指纹。此时中心不需要 OpenAI 登录文件。首次部署也可通过 `.env` 设置 `TRACKER_ROLE=server`、`CODEX_SCAN=false`、`TEAM_ACCOUNT_FINGERPRINT` 和 `SYNC_SECRET`。
+
+纯服务器无需启动 GUI，但需要通过中心本机的管理接口登记成员并获取接入配置；建议首次在有桌面的中心完成设置。管理请求需要来自回环地址且带 `X-Tracker-Local: 1`。不对公网开放管理 API。
+
+## 数据和更新
+
+```text
+server/installation.ts    安装角色、连接配置的校验和持久化
+server/team.ts            成员、设备绑定、团队周月报和图表数据
+server/sync/              上传、去重、持久队列、重试与心跳
+server/codex/accountScope.ts  本机账号范围筛选
+server/localReports.ts    本机周期报表及共享的日期聚合逻辑
+gui/main.py              原生窗口、成员范围、报表、状态
+gui/team.py              原生团队设置、成员管理和接入配置
+gui/charts.py            本地 Qt 图表
+```
+
+数据目录包含：
+
+```text
+codex-usage.sqlite        本机 / 中心计量数据；采集设备还包含待上传队列
+device.json               独立设备和安装实例标识
+account-scope.json        非密钥账号指纹、观察到的登录时间范围
+installation.json         角色、成员、连接地址和私有团队密钥
+team.sqlite               中心的成员与设备归属
+sync.sqlite               中心的设备心跳与上传状态
+report-settings.json      本机或中心月度起始日
+team-calendar.json        采集设备最后收到的中心日期设置及时间
+local-reports.json        本机报表快照
+team-reports.json         中心全员与每位成员的周月报快照
+```
+
+更新源码时保留整个数据目录和 `.env`，然后重新安装依赖、构建并重启后台。不要把私有数据、密钥、登录文件、会话日志或虚拟环境提交到公共仓库。保存数据目录时应使用数据库在线备份，或先停止后台后整体复制。
+
+本机既有安装的源码目录：`$HOME/.local/share/ai-usage-tracker`；既有账号筛选数据使用其 `data-current-account/`。其他安装以自己的 `.env` / Windows 用户资料目录为准。
+
+## 测试与验证范围
+
+```bash
+npm run typecheck
+npm run build:native
+npm test
 QT_QPA_PLATFORM=offscreen .venv-gui/bin/python -m unittest discover -s gui/tests -v
 ```
 
-PowerShell 可先设置 `$env:QT_QPA_PLATFORM='offscreen'`，再使用 `.venv-gui\Scripts\python.exe` 执行同样的 unittest 命令。
+测试覆盖账号范围、北京时间周月边界、短月份、多成员和多设备归属、事件重传去重、统一月度设置、真实 server / collector 进程启动、扫描上传、账号及 Claude 拒绝、离线队列与重启补传、网络访问权限、旧缓存迁移，以及原生范围切换和界面交互。
 
-最近的完整本地检查包括 87 项后台测试和 9 项原生 GUI / 环境测试。**这些测试没有覆盖当前应用的两种同步角色入口；本次隔离启动审查已复现这两个入口失败。** 上游同步组件的测试通过，只说明可复用的基础模块存在。
-
-`.github/workflows/native-gui.yml` 已准备 Ubuntu / Windows 检查配置，但尚未远程运行，也没有 Windows 多人部署的验收结果。
+GitHub Actions 的 `.github/workflows/native-gui.yml` 在 Ubuntu 和 Windows 上运行后台与 GUI 测试，并在 Windows 检查安装脚本。CI 结果以仓库 Actions 中相应提交为准；自动化检查不等于在每位成员的真实电脑上完成账号登录、网络连接和完整日常使用验收。

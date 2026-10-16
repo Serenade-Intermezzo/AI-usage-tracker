@@ -92,6 +92,9 @@ export interface SyncRecord {
 }
 
 export interface UploadRequest {
+  /** Required by the account-scoped team server. Optional for the upstream wire parser. */
+  memberId?: string;
+  accountFingerprint?: string;
   protocol: number;
   deviceId: string;
   deviceLabel: string;
@@ -132,6 +135,8 @@ export interface CollectorStatusReport {
 }
 
 export interface HeartbeatRequest {
+  memberId?: string;
+  accountFingerprint?: string;
   protocol: number;
   deviceId: string;
   deviceLabel: string;
@@ -140,6 +145,7 @@ export interface HeartbeatRequest {
 }
 
 export interface HeartbeatResponse {
+  monthStartDay?: number;
   ok: true;
   serverInstanceId: string;
   serverTime: number;

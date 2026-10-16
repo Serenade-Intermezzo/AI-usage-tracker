@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone, timedelta
 import json
 import os
 from pathlib import Path
@@ -25,8 +26,10 @@ from qfluentwidgets import (PushButton as FluentButton, ToggleButton, PrimaryPus
                             setCustomStyleSheet, setTheme, setThemeColor, setFontFamilies, Theme)
 if __package__:
     from .charts import ChartsPanel
+    from .team import ConnectionDialog, MembersDialog, api as local_api
 else:
     from charts import ChartsPanel
+    from team import ConnectionDialog, MembersDialog, api as local_api
 
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_URL = "http://127.0.0.1:8893"
@@ -51,7 +54,7 @@ def backend_is_ready(url: str) -> bool:
             health = json.load(response)
         with NETWORK_OPENER.open(url + "/api/overview?provider=codex", timeout=2) as response:
             scope = json.load(response)
-        return bool(health.get("ok") and scope.get("trackingScope") == "local" and scope.get("accountScope", {}).get("enabled"))
+        return bool(health.get("ok") and ((health.get("role") == "server" and not health.get("scanLocal", True)) or (scope.get("trackingScope") == "local" and scope.get("accountScope", {}).get("enabled"))))
     except (OSError, ValueError):
         return False
 
@@ -74,9 +77,12 @@ def windows_backend_environment() -> dict[str, str]:
                 eligible.append(p)
         except (OSError, ValueError):
             pass
-    if not eligible:
+    data = Path(env.get('LOCALAPPDATA', str(home / 'AppData' / 'Local'))) / 'CodexUsageTracker' / 'data-current-account'
+    profile = data / 'installation.json'
+    headless = profile.is_file() and json.loads(profile.read_text(encoding='utf-8')).get('scanLocal') is False
+    if not eligible and not headless:
         raise RuntimeError("请先在 Codex 桌面端或 CLI 中通过 OpenAI 账号登录，再打开统计工具。")
-    primary = eligible[0]
+    primary = eligible[0] if eligible else candidates[0]
     data = Path(env.get("LOCALAPPDATA", str(home / "AppData" / "Local"))) / "CodexUsageTracker" / "data-current-account"
     data.mkdir(parents=True, exist_ok=True)
     env.update({
@@ -130,6 +136,8 @@ QPushButton:checked { background: #e7eff1; color: #315b68; border-color: #ccdce1
 QPushButton#save { background: #355d6b; color: white; border: none; }
 QPushButton:disabled { color: #a9b0b6; }
 QPushButton#save:disabled { background: #edf0f3; color: #a3adb4; }
+QLineEdit, QPlainTextEdit { background: white; border: 1px solid #dce2e7; border-radius: 12px; padding: 8px; }
+QDialog { background: #f3f5f8; }
 QComboBox { background: white; border: 1px solid #dce2e7; border-radius: 16px; padding: 5px 10px; min-width: 50px; }
 QTableWidget { background: white; alternate-background-color: #fafbfc; border: none; gridline-color: #edf0f2; selection-background-color: #e8f0f2; selection-color: #263e48; }
 QTableWidget::item { padding: 10px; border-bottom: 1px solid #edf0f2; }
@@ -147,6 +155,12 @@ class UsageWindow(QMainWindow):
         self.network = QNetworkAccessManager(self)
         self.network.setProxy(QNetworkProxy(QNetworkProxy.NoProxy))
         self.reports = {}
+        self.team = {}
+        self.pending_team = False
+        self.team_loaded = False
+        self.scope_id = "local"
+        self.restarting = False
+        self.closing = False
         self.overview = {}
         self.mode = "weekly"
         self.loading_day = False
@@ -176,19 +190,29 @@ class UsageWindow(QMainWindow):
         refresh = FluentButton("刷新")
         refresh.clicked.connect(self.refresh)
         header.addWidget(refresh)
+        self.settings_button = FluentButton("设置")
+        self.settings_button.clicked.connect(self.configure_team)
+        header.addWidget(self.settings_button)
         page.addLayout(header)
         self.navigation = QHBoxLayout()
         self.report_tab = ToggleButton("用量报表")
         self.chat_tab = ToggleButton("聊天明细")
         self.chart_tab = ToggleButton("图表分析")
-        for button in (self.report_tab, self.chat_tab, self.chart_tab):
+        self.team_tab = ToggleButton("成员与设备")
+        for button in (self.report_tab, self.chat_tab, self.chart_tab, self.team_tab):
             button.setCheckable(True)
             self.navigation.addWidget(button)
         self.report_tab.setChecked(True)
         self.navigation.addStretch()
+        self.scope = FluentComboBox()
+        self.scope.addItem("本机", userData="local")
+        self.scope.currentIndexChanged.connect(self.scope_changed)
+        self.scope.setMinimumWidth(150)
+        self.navigation.addWidget(self.scope)
         self.report_tab.clicked.connect(lambda: self.show_page(0))
         self.chat_tab.clicked.connect(lambda: self.show_page(1))
         self.chart_tab.clicked.connect(lambda: self.show_page(2))
+        self.team_tab.clicked.connect(lambda: self.show_page(3))
         page.addLayout(self.navigation)
         self.stack = QStackedWidget()
         page.addWidget(self.stack, 1)
@@ -251,6 +275,41 @@ class UsageWindow(QMainWindow):
         self.stack.addWidget(self.chat_table)
         self.charts = ChartsPanel()
         self.stack.addWidget(self.charts)
+        team_page = QWidget()
+        team_box = QVBoxLayout(team_page)
+        team_box.setContentsMargins(0, 0, 0, 0)
+        member_card = QFrame(objectName="card")
+        member_box = QVBoxLayout(member_card)
+        member_box.setContentsMargins(18, 16, 18, 12)
+        device_card = QFrame(objectName="card")
+        device_box = QVBoxLayout(device_card)
+        device_box.setContentsMargins(18, 16, 18, 12)
+        team_header = QHBoxLayout()
+        team_header.addWidget(QLabel("成员用量 · 本周 / 本月", objectName="chartHeading"))
+        team_header.addStretch()
+        self.manage_button = FluentButton("管理成员")
+        self.manage_button.setEnabled(False)
+        self.manage_button.clicked.connect(self.manage_members)
+        team_header.addWidget(self.manage_button)
+        member_box.addLayout(team_header)
+        self.member_table = self.make_table(["成员", "本周 Token", "本月 Token", "累计 Token", "设备数"])
+        self.member_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        for column in (1, 2, 3):
+            self.member_table.horizontalHeader().setSectionResizeMode(column, QHeaderView.Fixed)
+            self.member_table.setColumnWidth(column, 145)
+        self.member_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.Fixed)
+        self.member_table.setColumnWidth(4, 85)
+        member_box.addWidget(self.member_table)
+        team_box.addWidget(member_card, 1)
+        device_box.addWidget(QLabel("设备同步", objectName="chartHeading"))
+        self.device_table = self.make_table(["设备", "成员", "状态", "待上传", "最近联系"])
+        self.device_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        device_box.addWidget(self.device_table)
+        team_box.addWidget(device_card, 1)
+        self.team_note = QLabel("在设置中建立汇总中心或加入现有中心。", objectName="muted")
+        self.team_note.setWordWrap(True)
+        team_box.addWidget(self.team_note)
+        self.stack.addWidget(team_page)
         self.detail_button = QToolButton()
         self.detail_button.setText("统计范围与未计入记录")
         self.detail_button.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
@@ -279,7 +338,7 @@ PrimaryPushButton:disabled {background:#edf1f6; color:#a1abb7; border:none;}
         setFluentFont(self.month_day, 16)
         qss = 'ComboBox {font-size:16px; min-height:28px; border-radius:17px; border:1px solid transparent; background:#f0f4f9; padding:5px 14px;}'
         setCustomStyleSheet(self.month_day, qss, qss)
-        for table in [self.report_table, self.chat_table]:
+        for table in [self.report_table, self.chat_table, self.member_table, self.device_table]:
             setFluentFont(table, 16)
             qss = 'QTableView, QTableWidget {font-size:16px; border:none; border-radius:16px;} QHeaderView::section {font-size:15px; background:white; color:#82909d; border:none; border-bottom:1px solid #f0f3f7; padding:13px 10px;}'
             setCustomStyleSheet(table, qss, qss)
@@ -294,6 +353,7 @@ PrimaryPushButton:disabled {background:#edf1f6; color:#a1abb7; border:none;}
         QTimer.singleShot(0, self.refresh)
 
     def closeEvent(self, event):
+        self.closing = True
         self.timer.stop()
         for reply, callback in list(self.active_requests.values()):
             try:
@@ -323,8 +383,10 @@ PrimaryPushButton:disabled {background:#edf1f6; color:#a1abb7; border:none;}
         table.verticalHeader().setDefaultSectionSize(56)
         return table
 
-    def request(self, endpoint: str, callback, body: dict | None = None):
+    def request(self, endpoint: str, callback, body: dict | None = None, method=None):
         request = QNetworkRequest(QUrl(self.url + endpoint))
+        request.setRawHeader(b"X-Tracker-Local", b"1")
+        scope_at_request = self.scope_id
         request.setAttribute(QNetworkRequest.CacheLoadControlAttribute, QNetworkRequest.AlwaysNetwork)
         if hasattr(request, "setTransferTimeout"):
             request.setTransferTimeout(10000)
@@ -332,27 +394,35 @@ PrimaryPushButton:disabled {background:#edf1f6; color:#a1abb7; border:none;}
             reply = self.network.get(request)
         else:
             request.setHeader(QNetworkRequest.ContentTypeHeader, "application/json")
-            reply = self.network.put(request, json.dumps(body).encode("utf-8"))
+            reply = (self.network.post if method == "POST" else self.network.put)(request, json.dumps(body).encode("utf-8"))
         def done():
+            scoped = endpoint.startswith(("/api/team/reports", "/api/local-reports", "/api/overview")) and not endpoint.endswith("settings")
+            stale = scoped and scope_at_request != self.scope_id
             try:
+                if stale:
+                    return
                 payload = json.loads(bytes(reply.readAll()).decode("utf-8"))
                 if reply.error() or payload.get("error"):
                     raise RuntimeError(payload.get("error") or reply.errorString())
                 callback(payload)
                 self.request_errors.pop(endpoint, None)
             except Exception as error:
+                if endpoint == "/api/installation/restart": self.restarting = False
                 self.request_errors[endpoint] = str(error)
             finally:
                 reply.deleteLater()
                 self.active_requests.pop(id(reply), None)
-                if endpoint == "/api/local-reports":
+                if endpoint == "/api/local-reports" or endpoint.startswith("/api/team/reports"):
                     self.pending_reports = False
                 elif endpoint.startswith("/api/overview"):
                     self.pending_overview = False
-                else:
+                elif endpoint == "/api/team":
+                    self.pending_team = False
+                elif endpoint.endswith("settings"):
                     self.pending_save = False
                     self.day_changed()
                 self.update_status()
+                if stale: QTimer.singleShot(0, self.refresh)
         self.active_requests[id(reply)] = (reply, done)
         reply.finished.connect(done)
 
@@ -361,16 +431,27 @@ PrimaryPushButton:disabled {background:#edf1f6; color:#a1abb7; border:none;}
             self.status.setText("连接暂时中断")
             self.hint.setText("更新失败：" + next(iter(self.request_errors.values())))
             return
+        if self.restarting:
+            self.status.setText("后台正在重启")
+            return
         scope = self.overview.get("accountScope", {})
         matching = any(home.get("matches") for home in scope.get("homes", []))
-        self.status.setText("当前账号 · 仅本机" if matching else "等待当前账号登录")
-        self.hint.setText(self.notice or "北京时间 · 周期结束后自动汇总 · 输入已包含缓存")
+        sync = self.team.get("sync") or {}
+        self.status.setText(("等待补传" if sync.get("state") in ("offline", "unauthorized", "rejected") else "多人统计") if self.team.get("enabled") else ("当前账号 · 仅本机" if matching else "等待当前账号登录"))
+        incomplete = self.reports.get("incomplete")
+        self.hint.setText(self.notice or ("部分设备离线或尚有待上传记录 · 当前为已收到的用量" if incomplete else "北京时间 · 周期结束后自动汇总 · 输入已包含缓存"))
 
     def refresh(self):
+        if self.restarting:
+            return
+        if not self.pending_team:
+            self.pending_team = True
+            self.request("/api/team", self.update_team)
         if not self.pending_reports:
             self.pending_reports = True
-            self.request("/api/local-reports", self.update_reports)
-        if not self.pending_overview:
+            endpoint = "/api/local-reports" if self.scope_id == "local" else "/api/team/reports" + ("" if self.scope_id == "all" else "?memberId=" + self.scope_id)
+            self.request(endpoint, self.update_reports)
+        if self.scope_id == "local" and not self.pending_overview:
             self.pending_overview = True
             self.request("/api/overview?provider=codex", self.update_overview)
 
@@ -379,6 +460,7 @@ PrimaryPushButton:disabled {background:#edf1f6; color:#a1abb7; border:none;}
         self.report_tab.setChecked(index == 0)
         self.chat_tab.setChecked(index == 1)
         self.chart_tab.setChecked(index == 2)
+        self.team_tab.setChecked(index == 3)
 
     def set_mode(self, mode: str):
         self.mode = mode
@@ -388,17 +470,21 @@ PrimaryPushButton:disabled {background:#edf1f6; color:#a1abb7; border:none;}
 
     def day_changed(self):
         if not self.loading_day:
-            self.save_button.setEnabled(not self.pending_save and bool(self.reports) and self.month_day.currentIndex() + 1 != self.reports.get("monthStartDay"))
+            self.save_button.setEnabled(self.reports.get("canEditMonthDay", True) and not self.pending_save and bool(self.reports) and self.month_day.currentIndex() + 1 != self.reports.get("monthStartDay"))
 
     def save_day(self):
         if self.pending_save:
             return
         self.pending_save = True
         self.save_button.setEnabled(False)
-        self.request("/api/local-reports/settings", self.saved_day, {"monthStartDay": self.month_day.currentIndex() + 1})
+        self.request("/api/team/settings" if self.team.get("enabled") and self.team.get("role") == "server" else "/api/local-reports/settings", self.saved_day, {"monthStartDay": self.month_day.currentIndex() + 1})
 
     def saved_day(self, reports):
-        self.update_reports(reports, force_day=True)
+        if self.scope_id != "all" and reports.get("scope") == "team":
+            self.pending_reports = False
+            self.refresh()
+        else:
+            self.update_reports(reports, force_day=True)
         self.set_mode("monthly")
         self.notice = "已保存月度起始日，历史月报已重新汇总。"
 
@@ -407,7 +493,12 @@ PrimaryPushButton:disabled {background:#edf1f6; color:#a1abb7; border:none;}
             self.notice = ""
         dirty = bool(self.reports) and self.month_day.currentIndex() + 1 != self.reports.get("monthStartDay")
         self.reports = reports
-        if not dirty or force_day:
+        self.month_day.setEnabled(reports.get("canEditMonthDay", True))
+        if reports.get("scope") == "team":
+            self.charts.set_data(reports.get("overview", {}))
+            self.update_team_tables(reports)
+            self.details.setText("团队报表仅包含已登记设备、指定 OpenAI 账号的可确认 Codex GUI / CLI 事件。成员归属由设备登记确定。\n周报按周一至周日，月报采用汇总中心统一起始日；离线补传后会更新历史报表。聊天正文、标题和项目路径不上传。")
+        if not dirty or force_day or not reports.get("canEditMonthDay", True):
             self.loading_day = True
             self.month_day.setCurrentIndex(reports["monthStartDay"] - 1)
             self.loading_day = False
@@ -416,6 +507,7 @@ PrimaryPushButton:disabled {background:#edf1f6; color:#a1abb7; border:none;}
         for label, value in zip(self.amount_labels, values):
             label.setText(compact(value))
             label.setToolTip(f"{value:,} Token")
+        self.card_notes[0].setText(("全体成员的已确认记录" if self.scope_id == "all" else "所选成员的已确认记录") if reports.get("scope") == "team" else "本机的已确认记录")
         self.card_notes[2].setText(f"每月 {reports['monthStartDay']} 日起算")
         self.fill_report_table()
         self.day_changed()
@@ -437,7 +529,8 @@ PrimaryPushButton:disabled {background:#edf1f6; color:#a1abb7; border:none;}
 
     def update_overview(self, overview):
         self.overview = overview
-        self.charts.set_data(overview)
+        if self.scope_id == "local":
+            self.charts.set_data(overview)
         scope = overview.get("accountScope", {})
         matching = any(home.get("matches") for home in scope.get("homes", []))
         self.status.setText("当前账号 · 仅本机" if matching else "等待当前账号登录")
@@ -457,6 +550,125 @@ PrimaryPushButton:disabled {background:#edf1f6; color:#a1abb7; border:none;}
             + f"\n未确认历史来源 {scope.get('unverifiedFiles', 0)} 份；第三方服务 {scope.get('otherProviderFiles', 0)} 份；其他账号 {scope.get('otherAccountFiles', 0)} 份。\n"
             + "月度起始日支持 1–31 日；短月份没有该日期时，使用当月最后一天。修改后重算历史月报，周报不变。"
         )
+
+    def scope_changed(self):
+        selected = self.scope.currentData() or "local"
+        if selected == self.scope_id:
+            return
+        self.scope_id = selected
+        self.request_errors.clear()
+        self.reports = {}
+        self.report_table.setRowCount(0)
+        self.chat_tab.setEnabled(selected == "local")
+        if selected != "local" and self.stack.currentIndex() == 1:
+            self.show_page(0)
+        self.charts.set_data({})
+        self.refresh()
+
+    def update_team(self, team):
+        self.team = team
+        self.manage_button.setEnabled(team.get("canManage", False))
+        selected = self.scope_id
+        self.scope.blockSignals(True)
+        self.scope.clear()
+        self.scope.addItem("本机", userData="local")
+        if team.get("enabled"):
+            self.scope.addItem("全体成员", userData="all")
+            for member in team.get("members", []):
+                self.scope.addItem(member['name'], userData=member['id'])
+        if not self.team_loaded and team.get("enabled"):
+            selected = "all"
+        self.team_loaded = True
+        index = self.scope.findData(selected)
+        self.scope.setCurrentIndex(max(0, index))
+        self.scope.blockSignals(False)
+        self.scope_changed()
+        if team.get("enabled"):
+            sync = team.get("sync") or {}
+            self.team_note.setText("月度起始日由汇总中心统一管理。" + (" 本机离线用量会保留并自动补传。" if sync.get('state') == 'offline' else " 聊天内容仅在原设备查看。"))
+        if self.scope_id == "local" and team.get("role") == "collector":
+            self.month_day.setEnabled(False)
+            self.save_button.setEnabled(False)
+
+    def update_team_tables(self, reports):
+        members = reports.get("members", [])
+        names = {m['id']: m['name'] for m in members}
+        rows = [[m['name'], compact(m['week']), compact(m['month']), compact(m['total']), str(m['devices'])] for m in members]
+        self.set_rows(self.member_table, rows)
+        rows = []
+        for device in reports.get('devices', []):
+            state = "离线" if not device.get('online') else "待上传" if device.get('pending') else "在线"
+            if device.get('lastError'): state = "需检查"
+            contact = device.get('lastSeenAt')
+            rows.append([device['label'], names.get(device['memberId'], '未登记'), state,
+                         str(device['pending']) if device.get('pending') is not None else '未知',
+                         datetime.fromtimestamp(contact, timezone(timedelta(hours=8))).strftime('%m-%d %H:%M') if contact else '尚未联系'])
+        self.set_rows(self.device_table, rows)
+        self.team_note.setText(("部分设备尚未上传完整数据。" if reports.get('incomplete') else "已收到各参与设备的最近同步。") +
+                              (f" 另有 {reports['unassignedEvents']} 条历史事件尚未关联成员。" if reports.get('unassignedEvents') else '') + " 聊天内容留在各设备。")
+
+    @staticmethod
+    def set_rows(table, rows):
+        table.setRowCount(len(rows))
+        for row, values in enumerate(rows):
+            for column, value in enumerate(values):
+                item = QTableWidgetItem(value)
+                item.setFont(table.font())
+                item.setTextAlignment((Qt.AlignLeft if column == 0 else Qt.AlignRight) | Qt.AlignVCenter)
+                table.setItem(row, column, item)
+
+    def configure_team(self):
+        try:
+            dialog = ConnectionDialog(self.url, self)
+            if dialog.exec_() != dialog.Accepted:
+                return
+            self.restarting = True
+            self.restart_previous_pid = dialog.profile.get("pid")
+            self.restart_attempts = 0
+            self.team_loaded = False
+            self.request_errors.clear()
+            self.request("/api/installation/restart", lambda _: QTimer.singleShot(1500, self.poll_restart), {}, "POST")
+        except Exception as error:
+            QMessageBox.warning(self, "多人统计设置", str(error))
+
+    def poll_restart(self):
+        if self.closing:
+            return
+        self.restart_attempts += 1
+        if self.restart_attempts > 30:
+            self.restarting = False
+            self.request_errors['restart'] = '后台未能在等待时间内启动，请检查后台日志后重新打开界面。'
+            self.update_status()
+            return
+        # Poll the local service without blocking the native event loop.
+        request = QNetworkRequest(QUrl(self.url + "/api/health"))
+        if hasattr(request, 'setTransferTimeout'): request.setTransferTimeout(1500)
+        reply = self.network.get(request)
+        def done():
+            try:
+                payload = json.loads(bytes(reply.readAll()).decode('utf-8'))
+                ready = not reply.error() and payload.get('ok') and payload.get('pid') != self.restart_previous_pid
+            except (ValueError, OSError):
+                ready = False
+            reply.deleteLater()
+            self.active_requests.pop(id(reply), None)
+            if ready:
+                self.restarting = False
+                self.request_errors.clear()
+                self.scope_id = "local"
+                self.pending_reports = self.pending_overview = self.pending_team = False
+                self.refresh()
+            else:
+                QTimer.singleShot(1500, self.poll_restart)
+        self.active_requests[id(reply)] = (reply, done)
+        reply.finished.connect(done)
+
+    def manage_members(self):
+        try:
+            MembersDialog(self.url, self).exec_()
+            self.refresh()
+        except Exception as error:
+            QMessageBox.warning(self, "成员管理", str(error))
 
     def toggle_details(self, expanded: bool):
         self.details.setVisible(expanded)

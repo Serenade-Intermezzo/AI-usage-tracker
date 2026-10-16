@@ -82,7 +82,7 @@ export function createCodexProvider(config: CodexProviderConfig): Provider {
     legacyPartId: (row) => codexPartId(row.sourceFile)
   });
   const additionalHomes = (process.env.CODEX_EXTRA_HOMES || '').split(path.delimiter).filter(Boolean);
-  const accountScope = process.env.CODEX_ACCOUNT_SCOPE === 'true' ? createAccountScope(runtime.dataDir, [codexHomeDirectory(), ...additionalHomes]) : null;
+  const accountScope = config.enabled && runtime.scanLocal !== false && process.env.CODEX_ACCOUNT_SCOPE === 'true' ? createAccountScope(runtime.dataDir, [codexHomeDirectory(), ...additionalHomes]) : null;
   const sessionSource = codexSessionSource(codexHomeDirectory(), additionalHomes);
   const codex = new AppServerClient();
   let lastLocalMetadataRefresh = 0;
@@ -357,7 +357,7 @@ export function createCodexProvider(config: CodexProviderConfig): Provider {
     enabled: config.enabled,
     store,
     start() {
-      if (started || !config.enabled) return;
+      if (started || !config.enabled || runtime.scanLocal === false) return;
       started = true;
       void refreshSessions();
       timers.push(setInterval(() => void refreshSessions(), config.sessionScanMs));
@@ -381,7 +381,7 @@ export function createCodexProvider(config: CodexProviderConfig): Provider {
       codex.stop();
     },
     async refresh() {
-      if (!config.enabled) return;
+      if (!config.enabled || runtime.scanLocal === false) return;
       if (!runtime.pollAccount || localOnly) {
         await refreshSessions();
         return;
