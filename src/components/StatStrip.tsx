@@ -17,7 +17,7 @@ export function StatStrip({ overview, copy }: { overview: DashboardOverview; cop
 
   const stats: Stat[] = [];
   if (account.lifetimeTokens !== null) {
-    stats.push({ label: 'Lifetime tokens', value: compact(account.lifetimeTokens), note: statsNote });
+    stats.push({ label: overview.trackingScope === 'local' ? '本机累计 Token' : 'Lifetime tokens', value: compact(account.lifetimeTokens), note: statsNote });
   }
   if (account.peakDailyTokens !== null) {
     stats.push({ label: 'Busiest day', value: compact(account.peakDailyTokens), note: 'tokens in one day' });
@@ -58,7 +58,7 @@ export function StatStrip({ overview, copy }: { overview: DashboardOverview; cop
   stats.push({ label: 'Chats indexed', value: String(totals.threads), note: 'from local logs' });
 
   return (
-    <section className="stat-strip" aria-label="Account statistics">
+    <section className="stat-strip" aria-label="Usage statistics">
       {stats.map((stat) => (
         <div className="stat" key={stat.label}>
           <span className="stat-label">{stat.label}</span>

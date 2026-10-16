@@ -1,0 +1,5 @@
+Native GUI dependencies (installed separately from PyPI):
+PyQt5 / PyQtChart: Riverbank Computing, GPL/commercial licensing.
+QFluentWidgets: https://github.com/zhiyiYo/PyQt-Fluent-Widgets (GPLv3/commercial licensing).
+Qt Charts: https://doc.qt.io/qt-5/qtcharts-index.html
+This source package contains dependency declarations, not bundled third-party Python/Qt binaries.

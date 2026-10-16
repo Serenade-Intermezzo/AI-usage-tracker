@@ -1,0 +1,66 @@
+当前仅支持各设备独立的单机统计；多人登记与统一汇总尚未完成，server/collector 入口存在已复现的启动故障。详情以根目录 README.md 为准。
+
+Codex 用量统计 · 原生桌面版
+
+Ubuntu 本机
+在应用列表中搜索“Codex 用量统计”。入口已改为 Qt 原生窗口，不再打开浏览器。
+界面使用 QFluentWidgets，图表使用 Qt Charts 与 Qt 本地绘制，不包含 WebView 或 WebEngine。
+正文、表格、按钮文字约 16px，汇总数字约 38px。
+Ubuntu 中中文、数字、按钮和图表统一使用 Noto Sans CJK SC；Windows 优先使用 Microsoft YaHei UI。
+界面改为圆角卡片、柔和阴影、胶囊按钮，去掉表格竖向分隔线。
+
+主要功能
+“用量报表”：累计、本周、本月 Token，周报/月报切换。
+“聊天明细”：本机当前账号的已确认聊天用量。
+“图表分析”：近 14 天每日用量、近 30 天活跃时段热力图、各模型输入/输出构成。
+图表与报表都使用北京时间；输入已包含缓存，不重复相加。
+
+月度起始日
+右上方“月度起始日”支持 1–31 日。更改后点击“保存”，历史月报会重新计算。
+当前本机保存为每月 12 日；以后以界面实时设置为准。
+例如选择 12 日，就是本月 12 日 00:00 至下月 12 日 00:00，表格日期显示到下月 11 日。
+短月份没有所选日期时，使用该月最后一天。周报仍为周一至周日，不受更改影响。
+周期未结束显示“进行中”，结束后自动保存汇总。
+
+统计范围
+只读取这台电脑当前用户的 Codex GUI/CLI 日志，并绑定当前 OpenAI/ChatGPT 登录账号。
+Claude Code、第三方 API 服务、其他账号不计入。
+旧日志没有账号标记时不凭当前登录推定历史归属；无标记的新增记录只在已观察到匹配登录的时段计入。
+后台未运行期间无法确认账号的无标记记录不会补算为该账号，因此统计可能少于全部本地历史。
+可在“统计范围与未计入记录”展开查看。
+本机累计、周报、月报来自同一套筛选后的数据；不查询共享账号的总用量或额度。
+
+后台与数据
+关闭 GUI 不会停止后台采集。Ubuntu 用户服务已启用自动启动。
+程序：Ubuntu 安装目录
+本机数据：程序目录 data-current-account/
+月度设置：data-current-account/report-settings.json
+周报月报：data-current-account/local-reports.json
+旧未筛选数据仍保留在 data/，不参与当前界面。
+界面依赖隔离在 .venv-gui/，避免影响其他 Python 环境。
+
+维护命令
+查看后台：systemctl --user status ai-usage-tracker
+重启后台：systemctl --user restart ai-usage-tracker
+停止后台：systemctl --user stop ai-usage-tracker
+关闭后台自启：systemctl --user disable --now ai-usage-tracker
+恢复后台自启：systemctl --user enable --now ai-usage-tracker
+
+Windows 10/11 x64
+1. 安装 Python 3.10+ 与 Node.js 22.5+。
+2. 在 Windows 的 Codex 桌面端或 CLI 中，通过所需 OpenAI 账号登录。
+3. 将整个“Windows原生版源码安装包”解压到固定文件夹。
+4. 首次双击 scripts\install-native-windows.cmd，等待依赖下载和安装完成。
+5. 以后使用桌面“Codex Usage Tracker”快捷方式打开，或运行 scripts\start-native-gui.cmd。
+安装会创建原生 GUI 快捷方式和登录后后台采集快捷方式，无需管理员权限；首次安装需要网络。
+不要移动解压目录；如移动，可在新目录重新运行安装脚本更新快捷方式。
+Windows 数据保存在 %LOCALAPPDATA%\CodexUsageTracker\data-current-account，使用那台电脑自己的日志和账号。
+要关闭登录后采集，在 shell:startup 中删除“Codex Usage Background”快捷方式。
+
+验证范围
+Ubuntu：原生窗口已实际启动，截图已检查，87 项后台测试和 9 项原生界面/环境测试通过。
+界面测试包括日期保存、刷新、重开、草稿保留、网络恢复、图表数据、字体及关闭窗口清理。
+Windows：已提供兼容代码、依赖安装和快捷方式脚本；当前环境没有 Windows 实机，未实际运行 Windows 安装器。
+包中 .github/workflows/native-gui.yml 可在 GitHub 上运行 Ubuntu/Windows 检查，尚未运行远程 CI。
+这是源码安装包，不是已验证的 Windows exe；不包含本人的 .env、日志、数据库或登录文件。
+本 fork 的原生版源码保留此实现；个人配置、数据库和登录文件不随源码发布。

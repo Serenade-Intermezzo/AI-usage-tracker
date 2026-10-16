@@ -5,3 +5,12 @@ data/*
 !data/.gitkeep
 .env
 *.log
+
+data-current-account/
+.venv-gui/
+__pycache__/
+*.pyc
+
+# Local installation metadata and generated snapshot
+INSTALL_PROVENANCE.json
+ubuntu-local.patch

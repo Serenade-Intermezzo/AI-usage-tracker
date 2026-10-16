@@ -202,6 +202,7 @@ function ThreadDetail({ thread, copy, now }: { thread: ThreadSummary; copy: Prov
 }
 
 interface ThreadsTableProps {
+  localOnly?: boolean;
   threads: ThreadSummary[];
   colors: Map<string, string>;
   selectedThreadId: string | null;
@@ -211,7 +212,7 @@ interface ThreadsTableProps {
   deviceLabels: Map<string, string> | null;
 }
 
-export function ThreadsTable({ threads, colors, selectedThreadId, copy, now, deviceLabels }: ThreadsTableProps) {
+export function ThreadsTable({ threads, colors, selectedThreadId, copy, now, deviceLabels, localOnly = false }: ThreadsTableProps) {
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<ThreadFilter>('all');
@@ -278,9 +279,9 @@ export function ThreadsTable({ threads, colors, selectedThreadId, copy, now, dev
     <section className="section" id="chats" aria-labelledby="chats-title">
       <header className="section-head with-tools">
         <div>
-          <h2 id="chats-title">Chats</h2>
-          <p>
-            {deviceLabels
+          <h2 id="chats-title">{localOnly ? '聊天明细' : 'Chats'}</h2>
+          <p hidden={localOnly}>
+            {localOnly ? '仅显示本机日志中的聊天和 Token 用量。' : deviceLabels
               ? 'Every chat from every device, with its share of each limit.'
               : 'Every chat found in your local logs, with its share of each limit.'}
           </p>
@@ -293,10 +294,10 @@ export function ThreadsTable({ threads, colors, selectedThreadId, copy, now, dev
               type="search"
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search chats, projects, models"
+              placeholder={localOnly ? '搜索聊天、项目或模型' : 'Search chats, projects, models'}
             />
           </label>
-          <div className="segmented" role="group" aria-label="Filter chats">
+          <div hidden={localOnly} className="segmented" role="group" aria-label="Filter chats">
             {([['all', 'All'], ['interactive', 'Interactive'], ['scripts', 'Scripts']] as const).map(([value, label]) => (
               <button
                 key={value}
@@ -312,11 +313,11 @@ export function ThreadsTable({ threads, colors, selectedThreadId, copy, now, dev
           <label className="select-field">
             <span className="sr-only">Sort chats</span>
             <select value={sort} onChange={(event) => setSort(event.target.value as ThreadSort)}>
-              <option value="recent">Most recent</option>
-              <option value="five">5-hour share</option>
-              <option value="seven">7-day share</option>
+              <option value="recent">{localOnly ? '最近使用' : 'Most recent'}</option>
+              {!localOnly && <option value="five">5-hour share</option>}
+              {!localOnly && <option value="seven">7-day share</option>}
               <option value="tokens">Tokens</option>
-              <option value="cost">API equivalent</option>
+              {!localOnly && <option value="cost">API equivalent</option>}
             </select>
           </label>
         </div>
@@ -330,13 +331,13 @@ export function ThreadsTable({ threads, colors, selectedThreadId, copy, now, dev
         <div className="thread-table" role="table" aria-label="Chats">
           <div className="thread-header" role="row">
             <span aria-hidden="true" />
-            <span role="columnheader">Chat</span>
-            <span role="columnheader">Model</span>
+            <span role="columnheader">{localOnly ? '聊天' : 'Chat'}</span>
+            <span role="columnheader">{localOnly ? '模型' : 'Model'}</span>
             <span role="columnheader" className="num">5h share</span>
             <span role="columnheader" className="num">7d share</span>
             <span role="columnheader" className="num">Tokens</span>
             <span role="columnheader" className="num">API eq.</span>
-            <span role="columnheader" className="num">Active</span>
+            <span role="columnheader" className="num">{localOnly ? '最近活动' : 'Active'}</span>
           </div>
           {visible.slice(0, limit).map((thread) => {
             const isExpanded = expanded.has(thread.threadId);

@@ -540,7 +540,7 @@ export class CodexRolloutParser implements ResumableParser {
     const usage = findIncrementalUsage(record);
     if (usage) {
       const observedAt = timestamp ?? this.updatedAt ?? Math.floor(Date.now() / 1000);
-      this.limits.push(...extractRateLimitWindows(record, observedAt));
+      if (process.env.LOCAL_ONLY !== 'true') this.limits.push(...extractRateLimitWindows(record, observedAt));
       const cost = estimateUsageCost(this.currentModel, usage, observedAt);
       // The rollout name, line, and time identify this response on any device.
       const eventKey = crypto
@@ -658,8 +658,9 @@ function isInside(root: string, file: string): boolean {
 }
 
 /** Rollouts under `sessions/` and `archived_sessions/` in CODEX_HOME. */
-export function codexSessionSource(codexHome = codexHomeDirectory()): SessionSource {
-  const roots = [path.join(codexHome, 'sessions'), path.join(codexHome, 'archived_sessions')];
+export function codexSessionSource(codexHome = codexHomeDirectory(), additionalHomes: string[] = []): SessionSource {
+  const homes = [...new Set([codexHome, ...additionalHomes].map((home) => path.resolve(home)))];
+  const roots = homes.flatMap((home) => [path.join(home, 'sessions'), path.join(home, 'archived_sessions')]);
   return {
     label: 'Codex',
     parserVersion: CODEX_PARSER_VERSION,

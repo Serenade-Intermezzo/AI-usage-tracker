@@ -2306,3 +2306,55 @@ a {
     display: none;
   }
 }
+
+/* A shared account cannot attribute quota changes to this computer. */
+[data-local-only="true"] .thread-header > :nth-child(4),
+[data-local-only="true"] .thread-header > :nth-child(5),
+[data-local-only="true"] .thread-summary > .usage-cell,
+[data-local-only="true"] .thread-detail .detail-block:nth-child(2) { display: none; }
+[data-local-only="true"] .thread-header,
+[data-local-only="true"] .thread-summary { grid-template-columns: 24px minmax(180px, 1fr) 150px 105px 90px 90px; }
+[data-local-only="true"] .detail-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+
+.period-reports { scroll-margin-top: 90px; }
+.period-settings, .period-panel { padding: 22px; margin-bottom: 20px; }
+.period-settings label { font-size: 15px; margin-right: 16px; }
+.period-settings select { padding: 7px 12px; border: 1px solid var(--line); border-radius: 7px; background: white; margin: 0 5px; }
+.period-settings p, .period-note { font-size: 13px; color: var(--ink-2); line-height: 1.8; margin-top: 12px; }
+.period-panel h3 { margin-bottom: 15px; }
+.period-scroll { max-height: 420px; overflow: auto; }
+.period-table { width: 100%; border-collapse: collapse; font-size: 13px; white-space: nowrap; }
+.period-table th, .period-table td { padding: 13px 12px; text-align: right; border-bottom: 1px solid var(--line-soft); }
+.period-table th { position: sticky; top: 0; background: var(--surface); color: var(--ink-2); z-index: 1; }
+.period-table th:first-child, .period-table td:first-child { text-align: left; }
+.period-table small { display: block; color: var(--ink-2); margin-top: 4px; }
+.period-open { color: var(--accent); background: var(--accent-tint); padding: 4px 8px; border-radius: 5px; }
+
+[hidden] { display: none !important; }
+[data-local-only="true"] .overview { margin-bottom: 14px; }
+.local-scope-caption { color: var(--ink-2); font-size: 13px; display: flex; gap: 12px; padding: 0 0 4px; }
+.usage-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; margin-bottom: 24px; }
+.usage-summary-card { background: var(--surface); border: 1px solid var(--line-soft); border-radius: 14px; padding: 25px 28px; }
+.usage-summary-card > span { color: var(--ink-2); font-size: 13px; }
+.usage-summary-card strong { display: block; font-size: 32px; letter-spacing: -1px; font-weight: 600; margin: 12px 0 7px; }
+.usage-summary-card strong small { font-size: 13px; color: var(--ink-2); letter-spacing: 0; font-weight: 400; }
+.usage-summary-card p { font-size: 12px; color: var(--ink-2); }
+.report-panel { padding: 0 22px; overflow: hidden; }
+.report-toolbar { display: flex; justify-content: space-between; align-items: center; padding: 20px 0; gap: 15px; }
+.report-timezone, .report-bottom { color: var(--ink-2); font-size: 12px; }
+.report-month-setting { display: flex; align-items: center; gap: 12px; font-size: 13px; color: var(--ink-2); }
+.report-month-setting select { border: 1px solid var(--line); border-radius: 6px; padding: 5px; background: var(--surface); margin: 0 4px; }
+.report-bottom { padding: 15px 0 18px; }
+.report-message { padding: 8px 0; color: var(--ink-2); font-size: 13px; }
+.period-table th, .period-table td { padding: 17px 10px; }
+.scope-details { color: var(--ink-2); font-size: 12px; margin: 24px 0; line-height: 1.9; }
+.scope-details summary { cursor: pointer; }
+.scope-details p { margin-top: 10px; max-width: 950px; }
+[data-local-only="true"] .thread-header > :nth-child(7),
+[data-local-only="true"] .thread-cost { display: none; }
+[data-local-only="true"] .thread-header,
+[data-local-only="true"] .thread-summary { grid-template-columns: 24px minmax(180px, 1fr) 160px 115px 90px; }
+[data-local-only="true"] .ledger th:nth-child(3),
+[data-local-only="true"] .ledger td:nth-child(3),
+[data-local-only="true"] .prompt-metrics > :last-child { display: none; }
+@media (max-width: 700px) { .usage-summary { gap: 8px; } .usage-summary-card { padding: 18px 12px; } .usage-summary-card strong { font-size: 24px; } .report-panel { padding: 0 12px; } }

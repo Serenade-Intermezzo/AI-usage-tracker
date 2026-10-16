@@ -14,3 +14,11 @@ import './incremental.test.js';
 import './windows.test.js';
 import './sync.test.js';
 import './config.test.js';
+
+import './localOnly.test.js';
+
+import './localReports.test.js';
+
+import './codex/accountScope.test.js';
+
+import './chartTimezone.test.js';

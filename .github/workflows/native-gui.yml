@@ -1,0 +1,47 @@
+name: Native Codex GUI
+on:
+  workflow_dispatch:
+  push:
+    paths: ['gui/**', 'server/**', 'scripts/**', 'package*.json', 'tsconfig*.json', '.github/workflows/native-gui.yml']
+  pull_request:
+    paths: ['gui/**', 'server/**', 'scripts/**', 'package*.json', 'tsconfig*.json', '.github/workflows/native-gui.yml']
+permissions:
+  contents: read
+jobs:
+  native-tests:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Native backend build and tests
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm run build:native
+          npm test
+      - name: Native GUI interaction tests
+        run: |
+          python -m pip install -r gui/requirements.txt
+          python -m unittest discover -s gui/tests -v
+      - name: Windows installer and PowerShell parsing
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          foreach ($script in @('scripts/install-native-windows.ps1', 'scripts/start-native-gui.ps1')) {
+            $tokens = $null
+            $parseErrors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PWD $script), [ref]$tokens, [ref]$parseErrors) | Out-Null
+            if ($parseErrors.Count) { throw ($parseErrors | Out-String) }
+          }
+          & ./scripts/install-native-windows.ps1 -NoLaunch -SkipShortcuts

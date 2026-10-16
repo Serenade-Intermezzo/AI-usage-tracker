@@ -1,9 +1,10 @@
 import 'dotenv/config';
+import { createLocalReports } from './localReports.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
-import { createClaudeProvider } from './claude/provider.js';
+import { createDisabledClaudeProvider } from './disabledClaude.js';
 import { createCodexProvider } from './codex/provider.js';
 import { ConfigError, flagEnv, loadTrackerConfig, type TrackerConfig } from './config.js';
 import { demoDevices, demoOverview, demoWindowDetail, demoWindows } from './demo.js';
@@ -106,12 +107,7 @@ providers = {
     cloudTasksEnabled: flagEnv(process.env, 'CLOUD_TASKS', true),
     runtime
   }),
-  claude: createClaudeProvider({
-    enabled: flagEnv(process.env, 'CLAUDE_CODE', true),
-    usagePollMs: numberEnv('CLAUDE_USAGE_POLL_MS', 120_000),
-    sessionScanMs: numberEnv('CLAUDE_SESSION_SCAN_MS', numberEnv('SESSION_SCAN_MS', 120_000)),
-    runtime
-  })
+  claude: createDisabledClaudeProvider()
 };
 
 const syncClient = isCollector && !demoMode
@@ -194,6 +190,26 @@ function dashboardAvailable(response: express.Response): boolean {
   return false;
 }
 
+// Reports use this machine's persisted token events; no account API is called.
+const localReports = process.env.LOCAL_ONLY === 'true' && !demoMode && !isCollector
+  ? createLocalReports(config.dataDir, config.deviceId) : null;
+app.get('/api/local-reports', (_request, response) => {
+  if (!localReports) { response.status(404).json({error: '仅本机模式支持周报与月报。'}); return; }
+  try { response.json(localReports.refresh()); }
+  catch { response.status(500).json({error: '读取本机报表失败，请稍后重试。'}); }
+});
+app.put('/api/local-reports/settings', (request, response) => {
+  if (!localReports) { response.status(404).json({error: '仅本机模式支持周报与月报。'}); return; }
+  try { response.json(localReports.setMonthDay(request.body?.monthStartDay)); }
+  catch (error) { response.status(error instanceof Error && error.message.startsWith('月度起始日') ? 400 : 500)
+    .json({error: error instanceof Error && error.message.startsWith('月度起始日') ? error.message : '保存设置失败，请稍后重试。'}); }
+});
+// Persist ended periods even when the browser is closed; catch up after startup.
+const reportTimer = localReports ? setInterval(() => {
+  try { localReports.refresh(); } catch { console.warn('Could not update local period reports'); }
+}, 60_000) : null;
+reportTimer?.unref();
+
 app.get('/api/health', (_request, response) => {
   response.json({
     ok: true,
@@ -236,7 +252,7 @@ app.get('/api/sync/status', (_request, response) => {
 
 app.get('/api/providers', (_request, response) => {
   response.json({
-    providers: Object.values(providers).map(providerInfo),
+    providers: Object.values(providers).filter((p) => p.enabled).map(providerInfo),
     defaultProvider
   });
 });
@@ -306,11 +322,16 @@ if (isCollector && !demoMode) {
 }
 
 const clientDist = path.resolve(currentDir, '../dist');
-app.use(express.static(clientDist));
-app.use((request, response, next) => {
-  if (request.path.startsWith('/api/')) return next();
-  response.sendFile(path.join(clientDist, 'index.html'));
-});
+if (process.env.NATIVE_GUI_ONLY !== 'true') {
+  app.use(express.static(clientDist));
+  app.use((request, response, next) => {
+    if (request.path.startsWith('/api/')) return next();
+    response.sendFile(path.join(clientDist, 'index.html'));
+  });
+} else {
+  app.get('/', (_request, response) => response.json({service:'Codex Usage Tracker', interface:'native Qt Widgets', scope:'local'}));
+}
+
 
 const where = `http://${host ?? 'localhost'}:${port}`;
 const onListening = (error?: Error) => {
@@ -329,6 +350,7 @@ const onListening = (error?: Error) => {
   if (isCollector) console.log(`Sending usage to ${config.sync.centralUrl}; the outbox keeps it while the server is unreachable.`);
   if (config.role === 'server') console.log('Accepting usage from collectors at /api/sync.');
   if (demoMode) console.log('DEMO_MODE is enabled.');
+  if (localReports) { try { localReports.refresh(); } catch { console.warn('Local reports will retry automatically'); } }
 };
 if (host) app.listen(port, host, onListening);
 else app.listen(port, onListening);
@@ -339,6 +361,7 @@ if (!demoMode) {
 }
 
 function shutdown(): void {
+  if (reportTimer) clearInterval(reportTimer);
   syncClient?.stop();
   for (const provider of Object.values(providers)) provider.stop();
   process.exit(0);

@@ -1,550 +1,300 @@
-# AI Usage Tracker
+# Codex Usage Tracker
 
-A local AI Usage Tracker for quota windows, token history, API-equivalent token cost, and estimated model efficiency for two coding agents: **OpenAI Codex** and **Anthropic Claude Code**. A switch in the top bar flips the whole page between them.
+用于统计 Codex Token 用量的原生桌面工具。界面采用 Qt / QFluentWidgets，图表由 Qt Charts 和本地绘图控件绘制，不使用浏览器或 WebView。
 
-AI Usage Tracker runs entirely on your own machines. For Codex it starts `codex app-server`, reads account-level quota information, and scans local Codex session logs. For Claude Code it asks the same usage endpoint that Claude Code's `/usage` screen uses, and scans the local session transcripts Claude Code writes. Each provider keeps its own SQLite history.
+**项目目标：让共用同一个 OpenAI 账号的多位成员，在 Windows、Ubuntu 及其他 Linux 系统上分别采集自己的用量，并统一查看每位成员及全体成员的 Token 汇总。**
 
-It works on one machine, or across several: one central server hosts the dashboard and polls quota, and every other device runs a small collector that forwards its Codex and Claude Code usage events. Quota is then attributed across all devices together. See [Multiple devices](#multiple-devices).
+**当前状态：已实现单机原生统计；完整的多人汇总尚未实现。保留的同步模块目前有入口启动故障，不能按“多人版已可用”部署。**
 
-## What it shows
+本文描述本地定制版，审查日期为 2026-10-16。本分支保留原生 GUI、当前账号范围筛选和本机周月报的实现，作为后续多人功能开发的基线。
 
-For whichever provider is selected:
+- Fork：<https://github.com/Serenade-Intermezzo/AI-usage-tracker>
+- 上游：<https://github.com/Danielw412/AI-usage-tracker>
+- 当前统计对象：Codex GUI / CLI 中可确认属于指定 OpenAI 登录账号的本机记录。
+- Claude Code、第三方 API 服务和其他账号的用量不纳入本版统计。
 
-- Current 5-hour and 7-day usage, reset countdowns, burn rate, and a projection that stops at the limit.
-- Any extra windows the provider reports, such as Claude's model-specific weekly caps.
-- A segmented meter on each window showing which chats consumed it, what came from other surfaces or devices, and what happened before tracking began.
-- A usage chart with the projected path to reset and lanes showing when each chat was running.
-- Past 5-hour and 7-day windows: step back through them to see how each one filled up, which chats used it (with their share, tokens, API-equivalent price, model, and device), how much was attributed or unattributed, and how much was shared between chats running at the same time.
-- With several devices, which machine each chat ran on, and a small device list showing whether each collector is online, how much it still has queued, and how far it has synchronized.
-- Lifetime statistics: tokens, busiest day, streak, and longest turn (from the account API for Codex, from local logs for Claude Code).
-- Every local chat with its real name, source (desktop, CLI, IDE, scripted run, background, review), project, branch, model and reasoning effort, tokens, API-equivalent price, and its share of each window.
-- Expandable chat details with token mix (including cache writes for Claude), review or subagent overhead, timing per prompt, attribution coverage, and, for Claude Code, the cost figure the CLI itself recorded.
-- Daily tokens for the last 14 days and a weekday-by-hour activity heatmap.
-- A model ledger with tokens, API-equivalent price, five-hour windows consumed, tokens per 1% of quota, and active minutes per 1%.
-- Recent Codex Cloud tasks from the CLI, next to the unattributed usage they most likely explain. Claude Code cannot list cloud sessions, so that panel says so and the usage stays in the unattributed share.
-- The browser tab title shows both percentages so the numbers are visible from any window.
+## 1. 多人使用的目标与当前差距
 
-## Requirements
+“同一个 OpenAI 账号”“某位使用者”“一台设备”是三种不同的身份：
 
-- Node.js 22.5 or newer.
-- For Codex: the current Codex CLI installed and available as `codex` in your terminal, with a working login (normally ChatGPT-managed authentication).
-- For Claude Code: the Claude Code CLI installed and signed in with a claude.ai subscription (Pro, Max, Team, or Enterprise). Usage limits are a subscription feature; API-key sign-ins have no windows to show.
+- **账号**决定哪些 Codex 请求属于统计范围。
+- **成员**决定用量归到谁名下，必须由软件单独登记，不能从共用的 OpenAI 登录账号推断。
+- **设备**决定记录从哪里采集；一个成员可以有多台设备，也可能使用不同操作系统。
 
-Check the prerequisites:
+目标是按 `账号 → 成员 → 设备 → Token 事件` 组织记录。同一成员的 Windows 电脑和 Linux 电脑应合并到该成员名下；全体总量应来自去重后的事件集合。
 
-```powershell
-node --version
-codex --version
-claude --version
-```
+| 要求 | 当前状态 |
+| --- | --- |
+| 本机 Codex GUI / CLI 日志采集 | 已实现 |
+| 绑定指定 OpenAI 账号并排除其他来源 | 已实现，但历史归属和监测中断有限制 |
+| 原生 GUI、每日用量、活跃热力图、模型图表 | 已实现 |
+| 本机周报、月报、可调整月度起始日 | 已实现 |
+| Ubuntu 上实际运行 | 已验证 |
+| 其他 Linux 发行版 | 有 Linux 运行路径，尚未逐发行版验证 |
+| Windows 原生 GUI 与安装启动脚本 | 已准备，尚未 Windows 实机验证 |
+| 成员登记、一个成员关联多台设备 | 未实现 |
+| 成员用量、全员用量及相应周报/月报 | 未实现 |
+| 多人汇总的统一月度周期 | 未实现；当前设置只保存在各自本机 |
+| 多设备上传、断网队列、事件去重 | 保留上游模块，组件测试通过；当前应用入口集成存在阻塞 |
+| 中央端校验上传记录属于指定 OpenAI 账号 | 当前协议没有账号指纹字段，尚未实现 |
+| 原生 GUI 中配置汇总中心、查看人员及同步状态 | 未实现 |
 
-If a CLI is installed but not signed in, run `codex login` or start `claude` and follow the sign-in prompt.
+把当前程序分别安装到几个人的电脑上，只会得到几套各自独立的统计，**不会自动形成“所有人的用量”看板**。
 
-## Run in development mode
+## 2. 当前审查发现
 
-Open PowerShell in this folder:
+### 2.1 `server` / `collector` 模式启动失败
 
-```powershell
-Copy-Item .env.example .env
-npm install
-npm run dev
-```
+当前入口停用了 Claude，但同步初始化仍读取全部 provider 的数据库：
 
-Then open:
+- `server/index.ts` 初始化 collector 时，遍历所有 provider 并访问 `provider.store`。
+- `server/index.ts` 初始化中央端时，仍读取 `providers.claude.store`。
+- `server/disabledClaude.ts` 中，被停用的 Claude provider 的 `store` getter 会直接抛错。
 
-```text
-http://localhost:5173
-```
-
-The frontend runs on port 5173 and proxies `/api` requests to the local backend on port 8893. Add `?provider=claude` to the URL to open the Claude Code view directly; the last choice is remembered in the browser.
-
-## Run the production build
-
-```powershell
-npm install
-npm run build
-npm start
-```
-
-Then open:
+使用临时数据目录分别启动两个角色，均复现：
 
 ```text
-http://localhost:8893
+TRACKER_ROLE=server     → exit 1
+TRACKER_ROLE=collector  → exit 1
+Error: Claude Code is disabled in this installation
 ```
 
-### Start automatically on Windows
+复现没有修改实际运行的单机服务。修复应覆盖 provider 枚举、同步服务支持的 provider 集合以及真实入口启动测试，不能只把异常隐藏掉。
 
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts\install-autostart.ps1
+**目前不要依据上游 README 的多人部署步骤直接启用这两种角色。**
+
+### 2.2 设备标识不能替代成员标识
+
+目前配置和上传协议包含 `deviceId`、`deviceLabel`、`installId`，没有独立的 `memberId`，也没有成员与设备的映射。
+
+设备名称即使写成某个人的名字，也不能处理一人多机、设备转交和成员筛选；共用的 OpenAI 账号标识也不能区分不同的人。未来添加成员字段后，仍不能自动推断旧记录由谁使用；历史归属需要明确的设备所有者或补录证据，并保留归属变更记录。
+
+### 2.3 周报与月报只查询当前设备
+
+`server/localReports.ts` 使用以下条件读取事件：
+
+```sql
+WHERE device_id = ?
 ```
 
-This registers the `AI Usage Tracker` scheduled task, which runs `scripts\start-ai-usage-tracker.ps1` at every sign-in, and starts it right away. The same task runs whatever role `.env` selects, so on a laptop set up as a [collector](#2-set-up-a-collector-windows-laptop) it starts the collector. No administrator shell is needed. Rerun it whenever a script is renamed or moved; it also removes the old `Codex Usage Dashboard` task. To restart the tracker after a build, run `Start-ScheduledTask -TaskName "AI Usage Tracker"`; the start script replaces whatever tracker is already holding the port.
+其参数是本机设备 ID。因此，即使后续恢复上传，当前报表也不会自动变成全员报表。需要增加按成员、按设备以及全体的明确查询范围，并共享同一套周期规则。
 
-## Test the interface without live data
+### 2.4 Windows 启动路径仍固定为单机
 
-Edit `.env` and set:
-
-```dotenv
-DEMO_MODE=true
-```
-
-Restart the app. Demo mode uses generated data for both providers and does not start Codex App Server, call Anthropic, or read local session logs.
-
-## Multiple devices
-
-Codex and Claude Code limits are per account, not per machine. If you work on a server and a laptop, both draw from the same 5-hour and 7-day windows, and a tracker on one machine alone reports the other machine's usage as "unattributed". Multi-device mode fixes that.
+`gui/main.py` 中的 `windows_backend_environment()` 固定设置：
 
 ```text
- laptop (collector)                               Linux server (server role)
- ┌──────────────────────────────┐                 ┌──────────────────────────────────────────┐
- │ ~/.codex, ~/.claude          │                 │ ~/.codex, ~/.claude  ─┐                   │
- │   │ file watch + scan        │   HTTPS/HTTP    │                       ▼                   │
- │   ▼                          │   over Tailscale│  per-provider SQLite: events from every   │
- │ local SQLite ─► sync_outbox ─┼── batches ─────►│  device, keyed by stable event ids        │
- │ (same transaction)           │ ◄── acks ───────┤          │                                │
- │ rows deleted only after ack  │                 │  quota polling ──► attributeQuotaUsage() │
- └──────────────────────────────┘                 │          ▼                                │
-                                                  │  dashboard (current and past windows)     │
-                                                  └──────────────────────────────────────────┘
+TRACKER_ROLE=standalone
+HOST=127.0.0.1
 ```
 
-- **One authority.** The server owns the combined event history, polls account quota (about every 60 seconds for Codex, the existing Claude cadence and backoff), attributes it, and serves the dashboard. Collectors never poll the account and never attribute anything.
-- **Events, not totals.** Collectors send immutable token events: a stable event id, provider, device, thread, the timestamp written in the original Codex or Claude log, model, every token field, and the API-equivalent cost. They also send the descriptive records the dashboard shows (session parts, prompts, chat names, and quota samples found in local logs). Nothing is ever keyed by upload time.
-- **Idempotent.** Event ids do not depend on the device or the file path (`codex:<rollout file>:<line>:<time>`, `claude:<session>:<API message id>`), so re-sending, sending out of order, or the same transcript existing on two machines can never count an event twice. Thread totals on the dashboard are summed from these events.
-- **Shared attribution.** Every quota rise is split between all events logged since the previous rise, from every device, by API-equivalent cost (tokens where no price is known). Two sessions on different machines between the same two samples share the rise; sessions separated by a sample do not. An open but idle session has no events and gets nothing.
-- **Late events.** An event that arrives hours later is stored at its original timestamp, and the attribution of exactly the windows it falls in is recomputed. Everything else stays cached.
+原生 GUI 目前没有成员登记、汇总中心地址或同步配置入口。单独修改 Windows 源码目录里的 `.env`，不能把这一启动流程变成已验证的多人客户端。
 
-### 1. Set up the central server (Linux)
+### 2.5 原同步协议不等于最小化的 Token 汇总协议
 
-On the server (for example `latitude7370`), with Node.js 22.5 or newer and the Codex and Claude Code CLIs signed in as the same user:
+保留的上游协议除了 Token 事件，还支持同步聊天标题、提示词内容、项目路径等描述性记录；它也没有当前定制版的账号指纹校验字段。
+
+如果目标只是统计每个人用了多少 Token，多人版应默认只上传必要的计量字段，明确成员身份和账号范围。是否共享聊天内容应是另一项明确选择，不应随着用量同步默认发生。
+
+## 3. 当前单机版的功能
+
+### 用量报表
+
+- 当前账号在本机的累计、本周和本月 Token。
+- 周报按北京时间周一 00:00 至下周一 00:00 统计。
+- 月度起始日可选择每月 **1–31 日**，点击“保存”后立即重算历史月报。
+- 短月份没有所选日期时，使用当月最后一天；下个月继续按原设置计算。
+- 周期未结束显示“进行中”，结束后显示“已结束”。
+- 后台每分钟检查并保存汇总；GUI 关闭后后台仍可继续运行。
+
+### 图表与明细
+
+- 最近 14 天每日 Token 柱状图。
+- 最近 30 天按星期和小时绘制的活跃热力图。
+- 各模型的缓存输入、新增输入和输出构成。
+- 本机聊天的入口、模型和 Token 明细。
+- 原生控件使用统一字体、大字号和圆角界面。
+
+本机已保存的月度起始日以界面为准；它目前不是全员共享的设置。
+
+## 4. 统计含义和完整性
+
+### 账号范围
+
+本版读取 Codex 已保存的非秘密账号标识，并以 SHA-256 指纹绑定统计目标；不要求在软件中重新填写账号密码，也不把 OpenAI 登录令牌上传到汇总端。
+
+只计入官方 OpenAI provider、指定账号以及 Codex GUI / CLI 来源。与这些入口关联的子任务可纳入其用量。
+
+### 历史记录和中断
+
+- 部分旧日志没有账号标识，不能凭“现在登录了某个账号”推断过去也属于该账号。
+- 可确认账号标记的旧记录与已观察到匹配登录时段内的新记录，按代码中的筛选规则计入。
+- 监测启用后的新记录需要落在已观察到的匹配登录时段；后台未运行的时段可能漏计，即使原日志文件仍存在，也不能承诺全部补齐。
+- 未确认记录不混入正式统计，可在界面底部展开查看其范围说明。
+
+因此，当前累计量表示“本机可确认记录的合计”，不能标成共享账号的完整总用量。未来的全员汇总也必须展示参与设备、最后同步时间和未覆盖范围，不能把缺失数据当成零。
+
+### Token 计算
+
+- 缓存输入属于输入 Token 的一部分，不应再次加到输入上。
+- 按日志记录的实际发生时间归入周期，不按上传时间归入。
+- 月报直接按日期范围汇总事件，不把跨月的一整周周报直接相加。
+- 周报、月报中的聊天数分别去重，不能用各周聊天数简单相加代表月度独立聊天数。
+- Token 统计与共享账号的额度百分比是不同指标；当前原生版不轮询账号额度，也不据额度变化猜测各人的用量。
+
+## 5. 安装与运行：当前单机模式
+
+要求：Node.js **22.5+**、Python **3.10+**；Python GUI 依赖见 `gui/requirements.txt`。
+
+以下步骤针对本 fork 中包含 `gui/main.py` 的原生版源码。
+
+### Ubuntu / Linux
+
+本机已安装的版本可从应用列表打开 **“Codex 用量统计”**。
+
+在新的源码目录中准备依赖：
 
 ```bash
-git clone https://github.com/Danielw412/AI-usage-tracker.git ~/projects/AI-usage-tracker
-cd ~/projects/AI-usage-tracker
-cp .env.example .env
-npm install && npm run build
+npm ci --ignore-scripts --no-audit --no-fund
+npm run build:native
+python3 -m venv .venv-gui
+.venv-gui/bin/python -m pip install -r gui/requirements.txt
 ```
 
-Edit `.env`:
+创建 `.env`，示例为单机统计配置：
 
 ```dotenv
-TRACKER_ROLE=server
-DEVICE_ID=latitude7370          # any stable name; defaults to the hostname
-DEVICE_LABEL=Linux server
-SYNC_SECRET=<long random value>  # node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"
+TRACKER_ROLE=standalone
+LOCAL_ONLY=true
+NATIVE_GUI_ONLY=true
+CODEX_ACCOUNT_SCOPE=true
+CODEX=true
+CLAUDE_CODE=false
+DEFAULT_PROVIDER=codex
+QUOTA_POLLING=false
+CLOUD_TASKS=false
+WATCH_SESSIONS=true
+HOST=127.0.0.1
 PORT=8893
-HOST=100.x.y.z                  # the server's Tailscale IP (tailscale ip -4): only the tailnet can reach it
-CODEX_BIN=/home/<you>/.local/bin/codex   # absolute path (`which codex`)
+DATA_DIR=./data-current-account
 ```
 
-Install it as a systemd user service, so it starts at boot and survives logouts:
+Codex 日志默认从 `~/.codex` 读取。若桌面端使用独立的 `~/.codex-desktop`，应在 `.env` 中将 `CODEX_HOME` 设置为该目录的实际绝对路径，将 `CODEX_EXTRA_HOMES` 设置为 CLI 目录的实际绝对路径。多个额外目录使用本系统的路径分隔符分隔：Linux 为 `:`，Windows 为 `;`。
+
+在使用 systemd 用户服务的 Linux 上：
 
 ```bash
 bash scripts/install-linux-service.sh
-journalctl --user -u ai-usage-tracker -f
+bash scripts/open-local-gui.sh
 ```
 
-The script writes `~/.config/systemd/user/ai-usage-tracker.service` for this checkout and the Node.js found on `PATH` (set `NODE_BIN` to pick another, for example `NODE_BIN=$(nvm which default)`), enables it, enables lingering, and restarts it. Rerun it after moving the checkout or changing Node versions. The unit restarts the tracker whenever it exits, so if the Tailscale address is not up yet at boot, the tracker exits, waits 10 seconds, and tries again.
-
-The dashboard is at `http://<server>:8893`, for example `http://latitude7370.<tailnet>.ts.net:8893`. The server scans its own sessions exactly as a standalone install does.
-
-### 2. Set up a collector (Windows laptop)
-
-On the laptop, same checkout and build, then in `.env`:
-
-```dotenv
-TRACKER_ROLE=collector
-DEVICE_ID=laptop                # keep the id this machine already has (see data/device.json) to keep its history labelled
-DEVICE_LABEL=Laptop
-CENTRAL_URL=http://latitude7370.<tailnet>.ts.net:8893   # the server's Tailscale name (or IP) and PORT
-SYNC_SECRET=<the same value as the server>
-PORT=8893
-HOST=127.0.0.1                  # the collector only needs to be reachable locally
-```
-
-Then run `scripts\install-autostart.ps1` once (see [Start automatically on Windows](#start-automatically-on-windows)). The `AI Usage Tracker` scheduled task starts the collector at every sign-in; Tailscale's own Windows service keeps the connection to the server up. On Linux or macOS, use `scripts/install-linux-service.sh` or any process manager instead. The collector:
-
-- watches `~/.codex/sessions`, `~/.codex/archived_sessions`, and `~/.claude/projects` and indexes a changed transcript within a couple of seconds, with the `SESSION_SCAN_MS` scan as a safety net;
-- writes every new or changed record into a local outbox **in the same SQLite transaction** that indexed it;
-- uploads the outbox in batches (500 records per request by default) a couple of seconds after activity, coalescing bursts;
-- sends a heartbeat every 90 seconds even when idle, so the server knows it is online and how far it has synchronized.
-
-Opening the collector's own port in a browser redirects to the central dashboard; `http://localhost:<PORT>/api/health` shows its sync status (queued records, last success, last error, next retry).
-
-The first time a collector reaches a server, it sends everything it has ever indexed, including history collected while it ran standalone. Uploads are idempotent, so this is safe to repeat; it happens again automatically if the server's database is ever replaced.
-
-### Authentication and network
-
-- Every sync request carries `Authorization: Bearer <SYNC_SECRET>`; the server compares it in constant time and answers 401 otherwise. A server refuses to start without `SYNC_SECRET`, and so does a collector.
-- The sync API is meant for a private network such as Tailscale. For traffic over anything else, put the server behind HTTPS (for example `tailscale serve` or a reverse proxy) and use an `https://` `CENTRAL_URL`.
-- The dashboard pages themselves are unauthenticated, as before. Use `HOST` to listen only on the Tailscale interface, or firewall the port.
-- A collector may not use the server's own device id (it gets a clear 409 error). If two installations report with the same `DEVICE_ID`, the device list warns about it.
-
-### Offline queue behavior
-
-- While the server is unreachable, local usage keeps being indexed and queued. The collector logs the failure once (not on every retry) and retries with exponential backoff from 5 seconds up to `SYNC_MAX_BACKOFF_MS` (5 minutes).
-- Queued records stay in the collector's SQLite database (`data/codex-usage.sqlite` and `data/claude-usage.sqlite`, table `sync_outbox`) until the server acknowledges them. The server acknowledges a record only after the transaction that stored it has committed, and the collector deletes exactly the acknowledged records. Restarting either machine at any point loses nothing: an unacknowledged batch is simply sent again.
-- A record that changes while queued (a prompt that finished, a renamed chat) is replaced in the queue by its newest version, so hours or days of backlog upload quickly.
-- When the connection returns, the collector logs `Reconnected ... uploading N queued records` and drains the queue.
-- Until every active device has synchronized past a window, that window's chat shares are **provisional**: the dashboard marks them when a device is more than ten minutes behind, and they update by themselves when the late events arrive. A collector silent for `SYNC_DEVICE_RETIRE_DAYS` (30) stops holding windows provisional.
-- The device list in the top bar (shown once more than one device reports) lists each device as online or offline, with when it last synced, how many records it has queued, and how far it has synchronized.
-
-### Adding another collector later
-
-Repeat step 2 on the new machine with its own `DEVICE_ID` and the same `SYNC_SECRET` and `CENTRAL_URL`. Nothing changes on the server: the new device appears in the device list after its first heartbeat, its full history is uploaded, and any past windows its events fall into are recomputed automatically.
-
-### Deploying an update
-
-Push the change to GitHub, then rebuild and restart each machine. Both sides must speak the same sync protocol, so update the server and the collectors together.
+查看后台状态与日志：
 
 ```bash
-# server
-cd ~/projects/AI-usage-tracker && git pull && npm install && npm run build
-systemctl --user restart ai-usage-tracker
+systemctl --user status ai-usage-tracker
+journalctl --user -u ai-usage-tracker -n 50 --no-pager
 ```
 
-```powershell
-# Windows collector
-git pull; npm install; npm run build
-Start-ScheduledTask -TaskName "AI Usage Tracker"
-```
+Ubuntu 属于 Linux。当前实际验证的是这台 Ubuntu；其他 Linux 发行版还需确认 Qt 平台库、Python 依赖和服务管理方式。没有 systemd 的系统不能直接套用上述服务安装脚本。
 
-While the server restarts, collectors keep their changes queued and upload them when it is back.
+### Windows 10 / 11 x64
 
-### Viewing past windows
+1. 安装 Python 3.10+ 与 Node.js 22.5+。
+2. 在该电脑的 Codex Desktop 或 CLI 中通过目标 OpenAI 账号登录。
+3. 将本地定制版源码安装包完整解压到固定目录。
+4. 首次双击 `scripts\install-native-windows.cmd`。
+5. 之后使用桌面上的 **Codex Usage Tracker** 快捷方式，或 `scripts\start-native-gui.cmd`。
 
-In **Usage over the window**, choose **5 hours** or **7 days**, then use the arrows or the drop-down to step through windows. **Current window** keeps the live projection; a past window shows the samples recorded for it. For each window the panel shows the start and reset time, final usage, the progression chart with activity lanes, attributed and unattributed usage, attribution coverage, the split by device, and every chat that used it with its share (and how much of that share was shared with concurrent chats), tokens, API-equivalent cost, model, device, and source.
+首次安装会联网下载 GUI 和后台依赖。安装器会创建桌面快捷方式及登录后后台采集快捷方式；移动源码目录后需要重新安装快捷方式。
 
-Windows come from the reset history already stored with each quota sample, so they survive restarts and go back as far as samples do (the picker lists 35 days of 5-hour windows and 190 days of 7-day windows). Idle reset times, which slide forward on every poll until usage starts a window, are not listed.
-
-### Upgrading an existing installation
-
-The first start of this version migrates each provider database in place: every existing part, event, prompt, sample, and chat name is kept and stamped with this machine's device id. It then re-indexes the local logs once with the new stable ids (about half a minute for a few gigabytes of Codex logs), which also removes the double counting of Codex rollouts that were indexed both before and after Codex moved them into `archived_sessions`. History whose log files no longer exist is kept as it was. The migration is one-way; keep a copy of `data/` if you might go back to an older build.
-
-### Sync API
-
-All endpoints need the bearer secret and are only mounted when `TRACKER_ROLE=server`.
-
-| Endpoint | Body | Answer |
-|---|---|---|
-| `POST /api/sync/upload` | `{protocol: 1, deviceId, deviceLabel, installId, provider, records: [{seq, kind, key, data}]}` | `{ok, acked: [seq], rejected: [{seq, error}], serverInstanceId, serverTime}` |
-| `POST /api/sync/heartbeat` | `{protocol: 1, deviceId, deviceLabel, installId, status}` | `{ok, serverInstanceId, serverTime}` |
-
-Record kinds are `event`, `part`, `prompt`, `thread`, `sample`, and the removals `remove-part`, `remove-event`, `remove-prompt` (a Claude session superseded by its continuation, for example). Dashboard-side endpoints: `GET /api/windows?provider=&duration=300|10080`, `GET /api/windows/detail?provider=&duration=&resetsAt=`, `GET /api/devices?provider=`, and `GET /api/sync/status` (the collector's queue and connection state; on the server it needs the bearer secret).
-
-## Configuration
-
-Copy `.env.example` to `.env`. Supported values:
-
-| Variable | Default | Purpose |
-|---|---:|---|
-| `TRACKER_ROLE` | `standalone` | `standalone`, `server` (central machine), or `collector` (forwards to the server). |
-| `DEVICE_ID` | hostname | Stable id for this machine, stored in `data/device.json`. Changing it relabels this machine's rows. |
-| `DEVICE_LABEL` | `DEVICE_ID` | Name shown in the dashboard. |
-| `SYNC_SECRET` | unset | Shared secret for the sync API. Required for `server` and `collector`. |
-| `CENTRAL_URL` | unset | Collectors: base URL of the central server, e.g. `http://my-server:8893`. |
-| `SYNC_BATCH_SIZE` | `500` | Records per upload request. |
-| `SYNC_DEBOUNCE_MS` | `2500` | How long bursts of local changes are coalesced before uploading. |
-| `SYNC_HEARTBEAT_MS` | `90000` | Collector heartbeat and idle reconciliation cadence. |
-| `SYNC_MAX_BACKOFF_MS` | `300000` | Longest wait between retries while the server is unreachable. |
-| `SYNC_DEVICE_RETIRE_DAYS` | `30` | A collector silent this long no longer keeps windows provisional. |
-| `WATCH_SESSIONS` | `true` | Index transcripts as soon as they change; the periodic scan remains as a safety net. |
-| `QUOTA_POLLING` | `true` (`false` for collectors) | Poll account quota, account details, and cloud tasks. |
-| `HOST` | all interfaces | Address to listen on, for example the Tailscale IP. |
-| `DATA_DIR` | `./data` | Folder for databases, device identity, and sync state. |
-| `CODEX` | `true` | Set to `false` to turn the Codex provider off. |
-| `CLAUDE_CODE` | `true` | Set to `false` to turn the Claude Code provider off. |
-| `DEFAULT_PROVIDER` | `codex` | Provider shown first: `codex` or `claude`. |
-| `CODEX_BIN` | `codex` | Codex executable or full path to it. |
-| `CODEX_HOME` | `~/.codex` | Folder containing Codex sessions and archived sessions. |
-| `RATE_LIMIT_POLL_MS` | `60000` | Codex account quota polling interval. |
-| `ACCOUNT_USAGE_POLL_MS` | `900000` | Codex account daily-token summary polling interval. |
-| `THREAD_METADATA_POLL_MS` | `900000` | Codex App Server thread-name and preview refresh interval. |
-| `CLOUD_TASK_POLL_MS` | `600000` | How often `codex cloud list --json` is polled for cloud tasks. |
-| `CLOUD_TASKS` | `true` | Set to `false` to skip Codex cloud task polling. |
-| `SESSION_SCAN_MS` | `120000` | Full reconciliation scan of Codex session logs (also the Claude default); changed files are indexed sooner through file notifications. |
-| `CLAUDE_CONFIG_DIR` | `~/.claude` | Folder Claude Code stores its transcripts, sessions, and credentials in. |
-| `CLAUDE_CODE_OAUTH_TOKEN` | unset | Long-lived token from `claude setup-token`; otherwise the stored sign-in is used. |
-| `CLAUDE_USAGE_POLL_MS` | `120000` | Claude usage endpoint polling interval. |
-| `CLAUDE_SESSION_SCAN_MS` | `SESSION_SCAN_MS` | Claude transcript scan interval. |
-| `DEMO_MODE` | `false` | Use generated sample data. |
-| `PORT` | `8893` | Backend and production-web port. |
-| `DEBUG_AI_USAGE_TRACKER` | `false` | Print adapter and parser diagnostics (`DEBUG_USAGE_DASHBOARD` and `DEBUG_CODEX_DASHBOARD` remain accepted for compatibility). |
-
-On Windows, folder paths can be written as:
-
-```dotenv
-CODEX_HOME=C:\Users\YourName\.codex
-CLAUDE_CONFIG_DIR=C:\Users\YourName\.claude
-```
-
-## Project structure
+Windows 数据存放在：
 
 ```text
-ai-usage-tracker/
-├─ config/
-│  └─ pricing.json              API token prices (OpenAI and Anthropic) and model aliases
-├─ scripts/
-│  ├─ claude-statusline-sample.mjs  Optional Claude Code status-line hook that feeds quota samples
-│  ├─ install-autostart.ps1     Windows: registers the sign-in scheduled task
-│  ├─ install-linux-service.sh  Linux: writes and enables the systemd user service
-│  └─ start-ai-usage-tracker.ps1  Windows: what the scheduled task runs
-├─ server/
-│  ├─ codex/
-│  │  ├─ AppServerClient.ts     JSON-RPC client for codex app-server
-│  │  ├─ localThreadMetadata.ts Chat names, sources, and projects from the desktop state database
-│  │  ├─ normalize.ts           Compatibility layer for App Server payloads
-│  │  └─ provider.ts            Codex polling, scanning, and overview assembly
-│  ├─ claude/
-│  │  ├─ credentials.ts         Finds the Claude Code sign-in (file, keychain, or env)
-│  │  ├─ localState.ts          ~/.claude.json, live sessions, status-line samples
-│  │  ├─ messageText.ts         Prompt cleaning for Claude transcripts
-│  │  ├─ normalize.ts           Usage endpoint and account payloads -> dashboard windows
-│  │  ├─ paths.ts               Where Claude Code keeps its files
-│  │  ├─ provider.ts            Claude Code polling, scanning, and overview assembly
-│  │  ├─ sessionLogs.ts         Transcript parser (tokens, prompts, subagents, titles)
-│  │  └─ usageApi.ts            The endpoint behind /usage
-│  ├─ sync/
-│  │  ├─ client.ts              Collector: outbox upload, heartbeat, backoff
-│  │  ├─ protocol.ts            Wire format and validation of sync records
-│  │  ├─ registry.ts            Server: known devices, status, settled-through time
-│  │  └─ server.ts              Server: authenticated /api/sync endpoints
-│  ├─ analytics.ts              Projections, bank clustering, chart points, model efficiency
-│  ├─ cloudTasks.ts             Codex Cloud task listing through the CLI
-│  ├─ config.ts                 Role, device identity, and sync settings from the environment
-│  ├─ db.ts                     Per-provider SQLite store (events, parts, outbox, attribution cache)
-│  ├─ demo.ts                   Generated UI test data for both providers
-│  ├─ index.ts                  Express API, roles, provider registry, and static hosting
-│  ├─ messageText.ts            Prompt and title cleaning shared by both parsers
-│  ├─ overview.ts               Assembles the dashboard payload from any provider's store
-│  ├─ pricing.ts                API-equivalent cost calculation
-│  ├─ providers.ts              The provider interface and runtime settings
-│  ├─ schema.ts                 Table definitions and the in-place migration of older databases
-│  ├─ sessionLogs.ts            Codex rollout-log parser (resumable)
-│  ├─ sessionScan.ts            Incremental and change-driven indexing shared by both parsers
-│  ├─ sessionWatch.ts           File-system notifications for session folders
-│  ├─ threadUsage.ts            Quota attribution engine
-│  ├─ windows.ts                Current and past windows: per-window attribution across devices
-│  └─ types.ts                  Shared data types
-├─ src/
-│  ├─ App.tsx                   Page layout, provider switch, and data loading
-│  ├─ components/               Window cards, extra limits, usage chart, chats table, model ledger, cloud panel
-│  ├─ format.ts                 Number, time, and label formatting
-│  ├─ palette.ts                Validated categorical colors for chats
-│  ├─ providers.ts              Provider-specific wording
-│  ├─ styles.css                Design tokens, layout, and components
-│  └─ types.ts                  Mirror of the server types
-├─ .env.example
-├─ package.json
-└─ vite.config.ts
+%LOCALAPPDATA%\CodexUsageTracker\data-current-account
 ```
 
-The generated databases are stored at:
+**Windows 的兼容代码和安装脚本已准备；当前没有 Windows 实机验证结果。源码安装包也不等于已经验证的独立 EXE。**
+
+## 6. 数据、配置和源码位置
+
+项目结构：
 
 ```text
-data/codex-usage.sqlite    Codex events, parts, prompts, samples (and the outbox on a collector)
-data/claude-usage.sqlite   the same for Claude Code
-data/sync.sqlite           server only: known devices and the server's instance id
-data/device.json           this machine's device id
+gui/
+  main.py                  原生窗口、图表入口、日期设置和本机后台启动
+  charts.py                Qt 每日图、模型图及热力图
+  tests/                   原生 GUI 与环境测试
+server/
+  index.ts                 后台入口与数据接口
+  codex/accountScope.ts    当前账号与日志来源筛选
+  localReports.ts          当前设备周报、月报
+  sync/                    保留的跨设备同步模块；入口集成待修复
+scripts/
+  open-local-gui.sh         Linux 原生 GUI 入口
+  install-linux-service.sh Linux 用户服务安装
+  install-native-windows.* Windows 原生版安装
+  start-native-gui.*       Windows 原生 GUI 启动
+.github/workflows/
+  native-gui.yml           已准备的 Ubuntu / Windows 检查配置
 ```
 
-Delete a file only when you intentionally want to erase that provider's collected history. The two provider databases never share tables. On the central server they hold every device's events; each row records the device that produced it.
+当前 Ubuntu 安装约定：
 
-## How the data works
-
-The React app, the projections, the attribution engine, and the charts are provider-independent. Each provider supplies the same three things: quota samples, token events with prompts, and chat metadata. Everything below the provider adapters (`server/codex/`, `server/claude/`) is shared.
-
-### Quota windows
-
-**Codex.** The backend calls these documented Codex App Server methods:
-
-- `account/read`
-- `account/rateLimits/read`
-- `account/usage/read`
-
-It also listens for `account/rateLimits/updated` and immediately refreshes the full snapshot. Windows are identified by `windowDurationMins` (approximately `300` minutes → 5-hour, approximately `10080` → 7-day), not by their position in the response. When the 5-hour window is missing, the application does not invent a value.
-
-**Claude Code.** The backend reads the OAuth sign-in Claude Code stored (`<CLAUDE_CONFIG_DIR>/.credentials.json`, the macOS keychain, or `CLAUDE_CODE_OAUTH_TOKEN`) and calls `https://api.anthropic.com/api/oauth/usage`, the endpoint that powers Claude Code's `/usage` screen. The response's `five_hour` and `seven_day` blocks become the two main windows; every `weekly_scoped` entry (for example a separate weekly cap for one model family) appears as an extra window card. The token is only held in memory and only sent to that endpoint. If it has expired, the dashboard says so and waits for Claude Code to refresh it on its next run; it never refreshes tokens itself.
-
-Two more Claude sources fill gaps for free:
-
-- Claude Code caches its last `/usage` response in `~/.claude.json` (`cachedUsageUtilization`). Every time you open `/usage`, the dashboard picks that sample up.
-- Claude Code passes its rate-limit windows to status-line scripts after every API response. `scripts/claude-statusline-sample.mjs` appends them to `data/claude-rate-limit-samples.jsonl`, giving samples as often as Claude answers. Enable it in `~/.claude/settings.json`:
-
-  ```json
-  { "statusLine": { "type": "command", "command": "node C:/path/to/Codex-Dashboard/scripts/claude-statusline-sample.mjs" } }
-  ```
-
-  It prints a short `5h 68% · 7d 42%` line; set `CLAUDE_USAGE_SAMPLE_QUIET=1` to print nothing and keep your own status line.
-
-The usage endpoint rate-limits aggressive callers. The dashboard backs off for 5 to 30 minutes when it answers 429 and keeps showing the most recent stored sample with its age.
-
-### Projections
-
-For each active quota window, the backend fits a linear trend to recent local snapshots. It calculates:
-
-- percent used per hour
-- projected percentage at reset
-- estimated time the quota would reach 100%
-- pace compared with the rate required to last until reset
-- confidence based on the number and time span of collected samples
-
-The projection is an estimate. The reported `usedPercent` and `resetsAt` values remain the authoritative values.
-If reported usage drops unexpectedly inside the same nominal window, the dashboard treats that point as a reset boundary and fits only the continuous samples after it. Raw values above 100% remain intact in storage, charts, and projections.
-
-### Thread tokens and models
-
-**Codex.** The session scanner reads JSONL files under `~/.codex/sessions` and `~/.codex/archived_sessions`. It looks for incremental token-usage events, model metadata, timestamps, working directory, thread ID, source, user prompts, task start/completion events, and the rate-limit snapshot embedded in every token event. This parser is isolated in `server/sessionLogs.ts` because local log formats can change.
-
-Codex chat names come from three places, in order of preference: the `name` column of the Codex desktop state database (`state_5.sqlite`), the `name` field returned by App Server `thread/list`, and finally a label built from the thread's source with the cleaned first prompt shown underneath. The raw first prompt is never used as a chat name. Each chat is grouped with its auto-review (guardian) sessions; review tokens are shown as overhead.
-
-**Claude Code.** The transcript scanner reads every `.jsonl` under `<CLAUDE_CONFIG_DIR>/projects/`. Each assistant record carries the API response's `usage` block: uncached input, cache writes (with the one-hour share), cache reads, output, and thinking tokens. Streaming writes one record per content block that all repeat the same usage, so events are deduplicated by message id. Subagent work is recognised both inline (`isSidechain` records) and as separate `subagents/agent-*.jsonl` files, and is folded into the parent chat as subagent tokens. When a session is continued into a new session id, Claude Code copies the old transcript into the new file; the dashboard detects the `continued-in` marker and counts only the continuation.
-
-Claude chat names come from the `/rename` title, then the title Claude Code generated (`ai-title`), then the running session's name, and finally the cleaned first prompt. Prompts are the user's typed messages; slash commands that never reached the model, shell passthrough, and injected context are excluded. Each transcript also gives the working directory, git branch, entry point (CLI, Claude Desktop, IDE, SDK, background), and the effort level in force. The `cost-state` record holds Claude Code's own running cost estimate, which is shown next to the dashboard's API-equivalent figure for comparison. This parser is isolated in `server/claude/sessionLogs.ts`.
-
-### Per-thread usage and prompt metrics
-
-Both providers only report account-wide percentages. The dashboard attributes them to chats with an event-weighted model in `server/threadUsage.ts`:
-
-1. Every quota sample for one reset bank is placed on a timeline. Reset times that differ by a few seconds are clustered into the same bank.
-2. Each time the reported percentage climbs to a new high, the increase is split between the token events logged since the previous high, in proportion to their API-equivalent cost (tokens times an average rate for unpriced models).
-3. Two chats running at the same time therefore share an increase by how much work each did, not by wall-clock time. The share earned while other chats were running is reported separately.
-4. An increase with no local token events behind it is counted as unattributed usage. For Codex that is where Codex Cloud tasks, the ChatGPT web app, and other machines show up. Claude limits are shared across claude.ai chat, Claude Desktop, cloud sessions, and every machine, so the same bucket covers all of them.
-5. Small drops between sources are treated as noise; a fall larger than 2.5 points, or a new reset time, starts a fresh segment.
-
-Each chat reports its share of the most recent window it was active in, plus a coverage figure: the fraction of its weighted tokens that were bracketed by a quota rise. A chat whose tokens have not yet moved the reported percentage shows as pending.
-
-With several devices, the events fed into step 2 come from every device, so chats on different machines that ran between the same two samples share that rise by cost, exactly like two chats on one machine. Attribution is derived data: it is computed per reset bank in `server/windows.ts` and cached in each database's `window_attribution` table. Any write that adds, changes, or removes an event deletes the cached result of every bank that event's timestamp falls in, in the same transaction, so a late upload recomputes only the windows it touches. A cached result is also checked against the bank's current samples before it is used. Raw events are never removed because attribution was computed.
-
-### Change-driven indexing
-
-Both parsers are resumable. For each log file the store remembers (in `local_files`) the byte offset of the last complete line and the parser state at that point. When a transcript grows, only the appended lines are parsed, and only the rows they produce are written. A partially written last line is read again once it is complete. A file is parsed from the start instead whenever that could give a different answer: the file shrank or its bytes before the saved offset changed (truncation or replacement), the parser version changed, the saved state is unusable, the appended lines change the part's identity (for example a Codex rollout turning out to be an auto-review), or a Claude continuation file the file depends on changed. Claude streaming deduplication carries across these boundaries because the set of seen message ids is part of the saved state.
-
-File-system notifications trigger indexing within about a second of a change; the periodic `SESSION_SCAN_MS` scan still visits every file (unchanged files cost one `stat`) in case a notification was missed.
-
-Expanded chat rows show prompt segments recovered from local logs. For Codex, timing is exact when a completed turn is reported and derived from timestamps otherwise. For Claude Code, turn durations come from the `turn_duration` record Claude Code writes at the end of each turn; time to first token is derived from timestamps. Derived durations are marked.
-
-### Model token and cost graphs
-
-The model ledger sums tokens and API-equivalent price by the model recorded for each request. Codex auto-review appears as its own token row, but for quota efficiency its tokens are folded into the parent chat's model. Claude cache writes are shown as their own stack segment because they are billed at a premium.
-
-### API-equivalent cost
-
-The cost is an estimate of what the observed tokens would cost at the public API rate. It is **not** an amount charged to a ChatGPT or Claude subscription.
-
-The calculator separates:
-
-- uncached input tokens
-- cached input tokens (cache reads)
-- cache writes, with separate 5-minute and 1-hour rates when the model has them
-- output tokens
-
-For supported long-context models, a request whose input exceeds the configured threshold uses the configured long-context multiplier. Prices, aliases, and historical rate changes are stored in `config/pricing.json` so they can be updated without changing the application code. Historical session costs are calculated using the rate effective when each token event was recorded. Anthropic prices come from the published Claude API pricing table; Claude 4.6 and later models have no long-context premium.
-
-GPT-6.1 Sol is priced at $2 input, $0.10 cached input, $2.50 cache writes, and $10 output per million tokens. Above 272,000 input tokens per request, these rates become $4, $0.20, $5, and $15 respectively. These are [OpenAI's standard API rates](https://developers.openai.com/api/docs/pricing). This update re-indexes existing Codex logs on startup on both collectors and the server, refreshing stored costs and syncing corrected collector records.
-
-`reasoningOutputTokens` (Codex reasoning, Claude thinking) is displayed separately when available, but is not added again to cost since it is already included in output-token accounting.
-
-### Minutes per 1% by model
-
-The same attribution runs with the model as the key across the five-hour windows of the last 15 days. For each model the ledger reports:
-
-- windows used: attributed percentage divided by 100,
-- tokens per 1%: how many tokens the model processed for each point of quota,
-- minutes per 1%: active task minutes for each point of quota.
-
-Treat these as comparative rather than exact.
-
-### Cloud tasks
-
-`codex cloud list --json` is polled on a slow interval. Tasks are stored locally with their status, environment, and diff summary. The dashboard cannot see tokens for cloud tasks, so their cost shows up in the unattributed share of each window. Claude Code has no CLI command that lists cloud sessions, so the panel is marked unavailable for that provider.
-
-## Accuracy limits
-
-- Historical Codex quota points can be recovered from older rollout logs when those logs contain rate-limit snapshots. Claude transcripts carry no quota snapshots, so Claude history starts when the dashboard (or the status-line hook) first samples it.
-- `account/usage/read` may provide older daily token buckets for Codex. Claude has no equivalent, so its daily chart and lifetime statistics come from local transcripts only, and Claude Code deletes transcripts after its `cleanupPeriodDays` (30 days by default); the dashboard keeps what it has already indexed.
-- Chat shares are estimates. Reported percentages are integers, so small chats can stay pending until the limit moves.
-- Unattributed usage includes anything without a log on a tracked device: cloud tasks or sessions, claude.ai chats, devices without a collector, and sessions whose files were removed before they were indexed.
-- Event timestamps come from each device's clock. The server compares every collector's clock with its own at each heartbeat and warns in the device list when they differ by more than two minutes, but it does not shift timestamps; a badly skewed clock places that device's events next to the wrong quota samples.
-- While a collector is offline, its events are missing from the server and the windows they belong to are marked provisional; their shares settle once it catches up.
-- API-equivalent prices of uploaded events are recomputed with the server's `config/pricing.json`, so keep that file current on the server. Local events are repriced only when their logs are re-indexed.
-- Claude Code makes some background requests (title generation, summaries) that are not written to transcripts; the CLI's own cost figure includes them, the dashboard's does not.
-- API-equivalent prices can become outdated. Review `config/pricing.json` after model or pricing changes.
-
-## Updating the CLIs safely
-
-The dashboard does not modify either official interface, so normal UI updates do not affect it. App Server, transcript, or usage-endpoint changes can require adjustments.
-
-To limit update breakage:
-
-1. Keep all App Server payload handling in `server/codex/` and all Claude payload handling in `server/claude/`.
-2. Keep local-log assumptions in `server/sessionLogs.ts` (Codex) and `server/claude/sessionLogs.ts` (Claude Code).
-3. Ignore unknown fields and tolerate missing optional fields.
-4. Test an updated CLI with `npm run typecheck`, `npm test`, `npm run build`, and a manual refresh.
-5. When needed, generate schemas from the installed Codex version with Codex App Server's schema-generation command and compare them with the adapter types.
-
-The dashboard's React components, database, projections, and charts should normally remain unchanged when either protocol evolves.
-
-## Useful commands
-
-```powershell
-npm run dev        # Backend and frontend with live reload
-npm run typecheck  # TypeScript checks for both sides
-npm test           # Parser, pricing, attribution, sync, migration, and window tests
-npm run build      # Compile backend and production frontend
-npm start          # Run the compiled production application
+```text
+源码与程序目录：$HOME/.local/share/ai-usage-tracker
+当前账号数据：  <项目目录>/data-current-account/
+月度设置：      <数据目录>/report-settings.json
+报表快照：      <数据目录>/local-reports.json
+账号范围：      <数据目录>/account-scope.json
+旧未筛选数据：  <项目目录>/data/，不参与当前统计
+GUI 隔离环境：  <项目目录>/.venv-gui/
 ```
 
-## Troubleshooting
+备份和更新时应保留本机配置、设备标识、账号范围和数据库。不要把 `.env`、`auth.json`、数据库、会话日志或 GUI 虚拟环境提交到公共仓库。
 
-### `codex` is not recognized
+本地源码目录已接入 Git，并保留上游提交历史；`origin` 指向本 fork。配置、数据库和虚拟环境保存在忽略列表中，不参与提交。更新远端需要显式提交和推送。
 
-Set an absolute executable path in `.env`:
+## 7. 面向多人版的下一步
 
-```dotenv
-CODEX_BIN=C:\path\to\codex.exe
+以下是待实现的目标架构，不是现有部署功能：
+
+```text
+成员 A · Ubuntu GUI/CLI ─┐
+成员 A · Windows GUI/CLI ├─ 本地采集与账号筛选 ─→ 汇总端 ─→ 原生 GUI
+成员 B · Linux GUI/CLI ──┘                         │        ├─ 全员汇总
+                                                  │        ├─ 按成员查看
+                                                  └────────└─ 按设备查看
 ```
 
-### Dashboard says Codex is disconnected
+实现顺序：
 
-Run `codex` directly first and confirm it is signed in. Set `DEBUG_AI_USAGE_TRACKER=true`, restart AI Usage Tracker, and inspect the terminal output.
+1. **恢复 Codex-only 同步入口。** 修复停用 Claude 后的数据库访问，并对 `server`、`collector` 两种真实启动入口做测试。
+2. **加入成员和设备关系。** 独立登记 `memberId` / 显示名称，让一个成员关联多个稳定设备 ID；同一台电脑由多人共用时，需要明确的用户档案或切换规则。
+3. **统一账号范围和最小同步协议。** 中央端登记目标账号指纹、校验上传来源；默认只同步计量所需信息，不默认上传提示词正文和完整项目路径。
+4. **实现人员与全员报表。** 按成员、设备或全体查询相同事件集合；由汇总端统一管理月度起始日和时区，更新后重算相应报表。
+5. **增加原生 GUI 配置和同步状态。** 可配置人员、设备和汇总端，显示待上传数量、最后同步时间及未覆盖范围；多人数据的读取和设置变更需要明确权限。
+6. **完成真实跨系统验证。** 至少覆盖 Windows + Ubuntu/Linux、同一人多设备、不同成员、断网重试、迟到记录和日志复制后的去重。
 
-If the error says the tracker is not allowed to launch `codex` (`spawn EPERM`), the server was started from a coding agent's sandboxed shell, for example a Codex desktop session running `npm start`. Processes started there inherit the sandbox and cannot launch `codex app-server` (or sometimes reach the network). Restart the tracker with `Start-ScheduledTask -TaskName "AI Usage Tracker"` so it runs outside the sandbox.
+多人版的验收应以“每个人分别能查到自己的记录，并且所有人的去重合计与全员汇总一致”为准，而不能以几个单元测试通过或几个客户端窗口能打开代替。
 
-### Dashboard says the Claude Code sign-in was not found or has expired
+## 8. 测试与验证边界
 
-Start `claude` in a terminal; it refreshes the stored sign-in on launch. If Claude Code lives somewhere other than `~/.claude`, set `CLAUDE_CONFIG_DIR`. On macOS the credentials are read from the keychain entry `Claude Code-credentials`.
+后台测试：
 
-### Claude usage shows an old sample
+```bash
+npm test
+npm run build:native
+npm run typecheck
+```
 
-The usage endpoint rate-limits frequent callers. The dashboard waits and retries automatically. Opening `/usage` inside Claude Code, or installing the status-line hook, keeps samples flowing in the meantime.
+原生 GUI 测试：
 
-### No local threads appear
+```bash
+QT_QPA_PLATFORM=offscreen .venv-gui/bin/python -m unittest discover -s gui/tests -v
+```
 
-Codex: confirm `CODEX_HOME` points to the folder containing `sessions` or `archived_sessions`. Claude Code: confirm `CLAUDE_CONFIG_DIR` contains a `projects` folder. Create or finish a chat, wait for the next scan, and press the refresh button.
+PowerShell 可先设置 `$env:QT_QPA_PLATFORM='offscreen'`，再使用 `.venv-gui\Scripts\python.exe` 执行同样的 unittest 命令。
 
-### A collector does not show up on the server
+最近的完整本地检查包括 87 项后台测试和 9 项原生 GUI / 环境测试。**这些测试没有覆盖当前应用的两种同步角色入口；本次隔离启动审查已复现这两个入口失败。** 上游同步组件的测试通过，只说明可复用的基础模块存在。
 
-Open `http://localhost:<PORT>/api/health` on the collector and look at `sync`:
-
-- `state: "offline"` with `ECONNREFUSED` or a timeout: `CENTRAL_URL` is wrong, the server is not running, or the network (Tailscale) is down. The queue keeps everything; nothing to do once the server is reachable again.
-- `state: "unauthorized"`: `SYNC_SECRET` differs between the two machines.
-- `state: "rejected"` mentioning `DEVICE_ID`: the collector uses the server's device id; give it its own.
-
-On the server, the device list in the top bar (or `GET /api/devices?provider=codex`) shows every device that has reported, with its last status and any warning.
-
-### A model has no estimated price
-
-Add an entry or alias to `config/pricing.json`, then restart the backend. Keep the price date current.
-
-### SQLite warning on Node 22
-
-Node 22 may print an experimental warning for its built-in SQLite module. The dashboard still works. Newer Node releases may no longer print that warning.
-
-## Official protocol references
-
-- Codex App Server README: https://github.com/openai/codex/blob/main/codex-rs/app-server/README.md
-- OpenAI API model pricing: https://developers.openai.com/api/docs/models
-- Claude Code costs and `/usage`: https://code.claude.com/docs/en/costs
-- Claude Code status-line data (rate-limit fields): https://code.claude.com/docs/en/statusline
-- Claude API pricing: https://platform.claude.com/docs/en/about-claude/pricing
+`.github/workflows/native-gui.yml` 已准备 Ubuntu / Windows 检查配置，但尚未远程运行，也没有 Windows 多人部署的验收结果。

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { LocalReports } from './components/LocalReports';
 import { getOverview, getProviders, refreshOverview } from './api';
 import { ActivityHeatmap, DailyTokenChart } from './components/Charts';
 import { BrandLogo } from './components/BrandLogo';
@@ -16,7 +17,7 @@ import { assignSeriesColors } from './palette';
 import { DEFAULT_PROVIDER, PROVIDERS, isProviderId, type ProviderCopy } from './providers';
 import type { DashboardOverview, ProviderId, ProviderInfo } from './types';
 
-const SECTIONS: Section[] = ['overview', 'chats', 'models', 'cloud'];
+const SECTIONS: Section[] = ['overview', 'reports', 'chats', 'models', 'cloud'];
 const PROVIDER_STORAGE_KEY = 'ai-usage-tracker.provider';
 
 function initialProvider(): ProviderId {
@@ -57,7 +58,7 @@ function LoadingScreen({ copy }: { copy: ProviderCopy }) {
 
 const FALLBACK_PROVIDERS: ProviderInfo[] = [
   { id: 'codex', label: PROVIDERS.codex.label, enabled: true },
-  { id: 'claude', label: PROVIDERS.claude.label, enabled: true }
+  { id: 'claude', label: PROVIDERS.claude.label, enabled: false }
 ];
 
 export default function App() {
@@ -151,6 +152,7 @@ export default function App() {
       document.title = copy.appName;
       return;
     }
+    if (overview.trackingScope === 'local') { document.title = 'Codex 用量统计'; return; }
     const five = overview.limits.fiveHour;
     const seven = overview.limits.sevenDay;
     const parts = [
@@ -251,16 +253,17 @@ export default function App() {
   }
 
   return (
-    <div className="app" data-provider={provider}>
+    <div className="app" data-provider={provider} data-local-only={overview.trackingScope === 'local'}>
       <a className="skip-link" href="#overview">Skip to content</a>
       <Topbar
+        localOnly={overview.trackingScope === 'local'}
         active={activeSection}
         onNavigate={navigate}
         provider={provider}
         providers={providers}
         onProviderChange={switchProvider}
         copy={copy}
-        connected={overview.connection.connected}
+        connected={overview.accountScope ? overview.accountScope.homes.some(h => h.matches) : overview.connection.connected}
         planType={overview.account.planType ?? overview.connection.planType}
         updatedAt={overview.generatedAt}
         refreshing={refreshing}
@@ -278,6 +281,9 @@ export default function App() {
         ) : null}
 
         <section className="section overview" id="overview" aria-label="Overview">
+          {overview.trackingScope === 'local' ? (
+            <div className="local-scope-caption">Codex GUI / CLI <span>·</span> 当前 OpenAI 登录账号 <span>·</span> 仅本机</div>
+          ) : <>
           <div className="window-grid">
             <WindowCard
               title="5-hour window"
@@ -321,10 +327,15 @@ export default function App() {
             onSelectThread={selectThread}
           />
 
-          <StatStrip overview={overview} copy={copy} />
+          </>}
+
+          {overview.trackingScope !== 'local' && <StatStrip overview={overview} copy={copy} />}
         </section>
 
+        {overview.trackingScope === 'local' && <LocalReports />}
+
         <ThreadsTable
+          localOnly={overview.trackingScope === 'local'}
           threads={overview.threads}
           colors={colors}
           selectedThreadId={selectedThread}
@@ -335,20 +346,21 @@ export default function App() {
 
         <section className="section" id="models" aria-labelledby="models-title">
           <header className="section-head">
-            <h2 id="models-title">Models and rhythm</h2>
-            <p>What each model costs against the limit, and when the work happens.</p>
+            <h2 id="models-title">{overview.trackingScope === 'local' ? '模型用量' : 'Models and rhythm'}</h2>
+            <p>{overview.trackingScope === 'local' ? '本机各模型的 Token 用量与使用时间。' : 'What each model costs against the limit, and when the work happens.'}</p>
           </header>
           <div className="models-grid">
             <DailyTokenChart data={dailyData} />
             <ActivityHeatmap grid={overview.hourlyActivity} title={copy.heatmapTitle} />
           </div>
-          <ModelLedger usage={overview.modelUsage} efficiency={overview.modelEfficiency} />
+          <ModelLedger localOnly={overview.trackingScope === 'local'} usage={overview.modelUsage} efficiency={overview.modelEfficiency} />
         </section>
 
-        <CloudTasks cloud={overview.cloudTasks} breakdown={overview.breakdown} copy={copy} now={now} />
+        {overview.trackingScope !== 'local' && <CloudTasks cloud={overview.cloudTasks} breakdown={overview.breakdown} copy={copy} now={now} />}
 
+        {overview.accountScope ? <details className="scope-details"><summary>统计范围与未计入记录</summary><p>{overview.accountScope.note}</p><p>账号标识：{overview.accountScope.boundAccount} · 历史来源未确认 {overview.accountScope.unverifiedFiles} 份 · 第三方服务 {overview.accountScope.otherProviderFiles} 份 · 其他账号 {overview.accountScope.otherAccountFiles} 份 · 其他入口 {overview.accountScope.otherSurfaceFiles} 份。以上未确认历史不纳入报表。</p><p>当前登录状态：{overview.accountScope.homes.map(h => `${h.label} ${h.matches ? '匹配' : '不匹配，暂停计入'}`).join('；')}</p></details> : null}
         <footer className="page-foot">
-          <span>{copy.footer}</span>
+          <span>{overview.trackingScope === 'local' ? '仅统计本机当前账号的可确认用量' : copy.footer}</span>
         </footer>
       </main>
     </div>

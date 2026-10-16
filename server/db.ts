@@ -1702,12 +1702,12 @@ export function createUsageStore(options: UsageStoreOptions) {
   function getLocalDailyUsage(days = 7): DailyUsage[] {
     const since = Math.floor(Date.now() / 1000) - days * 86400;
     const result = db.prepare(`
-      SELECT date(observed_at, 'unixepoch', 'localtime') AS date,
+      SELECT date(observed_at, 'unixepoch', '+8 hours') AS date,
              SUM(total_tokens) AS tokens,
              'local' AS source
       FROM session_part_token_events
       WHERE observed_at >= ?
-      GROUP BY date(observed_at, 'unixepoch', 'localtime')
+      GROUP BY date(observed_at, 'unixepoch', '+8 hours')
       ORDER BY date ASC
     `).all(since);
     return rows<DailyUsage>(result);
@@ -1777,8 +1777,8 @@ export function createUsageStore(options: UsageStoreOptions) {
     const since = Math.floor(Date.now() / 1000) - days * 86400;
     const grid: number[][] = Array.from({ length: 7 }, () => Array.from({ length: 24 }, () => 0));
     const result = rows<{ weekday: string; hour: string; tokens: number }>(db.prepare(`
-      SELECT strftime('%w', observed_at, 'unixepoch', 'localtime') AS weekday,
-             strftime('%H', observed_at, 'unixepoch', 'localtime') AS hour,
+      SELECT strftime('%w', observed_at, 'unixepoch', '+8 hours') AS weekday,
+             strftime('%H', observed_at, 'unixepoch', '+8 hours') AS hour,
              SUM(total_tokens) AS tokens
       FROM session_part_token_events
       WHERE observed_at >= ?

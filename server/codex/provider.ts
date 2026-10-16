@@ -1,3 +1,5 @@
+import path from 'node:path';
+import { createAccountScope } from './accountScope.js';
 import { AppServerClient } from './AppServerClient.js';
 import { classifyThreadSource, readLocalThreadMetadata } from './localThreadMetadata.js';
 import {
@@ -19,7 +21,7 @@ import {
   type ProviderRuntime
 } from '../providers.js';
 import { createSessionScanner } from '../sessionScan.js';
-import { codexPartId, codexSessionSource } from '../sessionLogs.js';
+import { codexHomeDirectory, codexPartId, codexSessionSource } from '../sessionLogs.js';
 import type { CloudTaskStatus, DashboardOverview, RateLimitWindow } from '../types.js';
 import { listWindows, windowDetail } from '../windows.js';
 
@@ -70,6 +72,7 @@ function firstText(record: Record<string, unknown>, keys: string[]): string | nu
  */
 export function createCodexProvider(config: CodexProviderConfig): Provider {
   const runtime = config.runtime ?? standaloneRuntime();
+  const localOnly = process.env.LOCAL_ONLY === 'true';
   const store = config.store ?? createUsageStore({
     file: 'codex-usage.sqlite',
     provider: 'codex',
@@ -78,11 +81,14 @@ export function createCodexProvider(config: CodexProviderConfig): Provider {
     outbox: runtime.outbox,
     legacyPartId: (row) => codexPartId(row.sourceFile)
   });
+  const additionalHomes = (process.env.CODEX_EXTRA_HOMES || '').split(path.delimiter).filter(Boolean);
+  const accountScope = process.env.CODEX_ACCOUNT_SCOPE === 'true' ? createAccountScope(runtime.dataDir, [codexHomeDirectory(), ...additionalHomes]) : null;
+  const sessionSource = codexSessionSource(codexHomeDirectory(), additionalHomes);
   const codex = new AppServerClient();
   let lastLocalMetadataRefresh = 0;
   const scanner = createSessionScanner({
     store,
-    source: codexSessionSource(),
+    source: accountScope ? accountScope.wrap(sessionSource) : sessionSource,
     watch: runtime.watchSessions,
     onScanned: (result, kind) => {
       // Chat names live in the desktop state database, which changes with the logs.
@@ -141,7 +147,7 @@ export function createCodexProvider(config: CodexProviderConfig): Provider {
   }
 
   function localMetadataInputs(): ThreadMetadataInput[] {
-    return readLocalThreadMetadata().map((item) => ({
+    return [codexHomeDirectory(), ...additionalHomes].flatMap((home) => readLocalThreadMetadata(home)).map((item) => ({
       threadId: item.threadId,
       displayName: item.displayName,
       preview: item.preview,
@@ -303,8 +309,9 @@ export function createCodexProvider(config: CodexProviderConfig): Provider {
     const notices: string[] = [];
     if (connectionError) notices.push(`Codex account connection error: ${connectionError}`);
 
-    return buildProviderOverview({
+    const result = buildProviderOverview({
       provider: 'codex',
+      localOnly,
       store,
       limits: {
         fiveHour,
@@ -335,8 +342,9 @@ export function createCodexProvider(config: CodexProviderConfig): Provider {
       sync: runtime.sync('codex'),
       notices,
       emptyThreadsNotice:
-        'No local session token events were found. Check CODEX_HOME or create a new Codex thread, then refresh.'
+        'No eligible Codex GUI/CLI usage has been confirmed for this account yet.'
     });
+    return accountScope ? {...result, accountScope:accountScope.summary()} : result;
   }
 
   function windowContext() {
@@ -355,7 +363,7 @@ export function createCodexProvider(config: CodexProviderConfig): Provider {
       timers.push(setInterval(() => void refreshSessions(), config.sessionScanMs));
       // Account quota and cloud tasks are account-wide: only the central
       // machine polls them, so devices do not all ask for the same numbers.
-      if (runtime.pollAccount) {
+      if (runtime.pollAccount && !localOnly) {
         void refreshCodexData(true);
         void refreshCloudTasks();
         timers.push(
@@ -369,11 +377,12 @@ export function createCodexProvider(config: CodexProviderConfig): Provider {
       for (const timer of timers) clearInterval(timer);
       timers.length = 0;
       scanner.stop();
+      accountScope?.stop();
       codex.stop();
     },
     async refresh() {
       if (!config.enabled) return;
-      if (!runtime.pollAccount) {
+      if (!runtime.pollAccount || localOnly) {
         await refreshSessions();
         return;
       }
@@ -385,10 +394,10 @@ export function createCodexProvider(config: CodexProviderConfig): Provider {
       return { connected: codex.connected && !connectionError, error: connectionError };
     },
     windows(durationMins) {
-      return listWindows(store, durationMins, undefined, pickWindow(durationMins), windowContext());
+      return localOnly ? [] : listWindows(store, durationMins, undefined, pickWindow(durationMins), windowContext());
     },
     windowDetail(durationMins, resetsAt) {
-      return windowDetail(store, durationMins, undefined, resetsAt, pickWindow(durationMins), windowContext());
+      return localOnly ? null : windowDetail(store, durationMins, undefined, resetsAt, pickWindow(durationMins), windowContext());
     },
     scannedThrough() {
       const startedAt = scanner.lastFullScanStartedAt();

@@ -243,3 +243,35 @@ test('Claude streaming records split across two scans are still counted once', a
     removeDir(directory);
   }
 });
+
+test('desktop and CLI homes share one ledger without counting a copied rollout twice', async () => {
+  const directory = tempDir('multi-home-codex');
+  const target = store(directory, 'combined');
+  try {
+    const desktop = path.join(directory, 'desktop');
+    const cli = path.join(directory, 'cli');
+    const start = baseTime(1);
+    const desktopFile = path.join(desktop, 'sessions', 'rollout-desktop.jsonl');
+    const cliFile = path.join(cli, 'sessions', 'rollout-cli.jsonl');
+    fs.mkdirSync(path.dirname(desktopFile), { recursive: true });
+    fs.mkdirSync(path.dirname(cliFile), { recursive: true });
+    fs.writeFileSync(desktopFile, lines([...codexHeader(start, 'desktop-thread'), ...codexRecords(start, 0, 2)]) + '\n');
+    fs.writeFileSync(cliFile, lines([...codexHeader(start, 'cli-thread'), ...codexRecords(start, 0, 3)]) + '\n');
+    fs.copyFileSync(desktopFile, path.join(cli, 'sessions', path.basename(desktopFile)));
+    const source = codexSessionSource(desktop, [cli, desktop]);
+    assert.equal(source.watchRoots().length, 4);
+    assert.equal(source.accepts(cliFile), true);
+    assert.equal(source.accepts(path.join(directory, 'outside.jsonl')), false);
+    await scanAllSessions(target, source);
+    assert.equal(target.getThreadSummaries().length, 2);
+    assert.equal(target.getTokenEventsBetween(0, Number.MAX_SAFE_INTEGER).length, 5);
+    await scanAllSessions(target, source);
+    assert.equal(target.getTokenEventsBetween(0, Number.MAX_SAFE_INTEGER).length, 5);
+    fs.appendFileSync(cliFile, lines(codexRecords(start, 3, 4)) + '\n');
+    await scanAllSessions(target, source);
+    assert.equal(target.getTokenEventsBetween(0, Number.MAX_SAFE_INTEGER).length, 6);
+  } finally {
+    target.close();
+    removeDir(directory);
+  }
+});

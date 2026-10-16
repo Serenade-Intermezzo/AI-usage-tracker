@@ -5,16 +5,18 @@ import { clock, sentence } from '../format';
 import type { ProviderCopy } from '../providers';
 import type { ProviderId, ProviderInfo, SyncOverview } from '../types';
 
-export type Section = 'overview' | 'chats' | 'models' | 'cloud';
+export type Section = 'overview' | 'reports' | 'chats' | 'models' | 'cloud';
 
 const NAV: Array<{ id: Section; label: string }> = [
   { id: 'overview', label: 'Overview' },
+  { id: 'reports', label: '周报与月报' },
   { id: 'chats', label: 'Chats' },
   { id: 'models', label: 'Models' },
   { id: 'cloud', label: 'Cloud' }
 ];
 
 interface TopbarProps {
+  localOnly?: boolean;
   active: Section;
   onNavigate: (section: Section) => void;
   provider: ProviderId;
@@ -31,6 +33,7 @@ interface TopbarProps {
 }
 
 export function Topbar({
+  localOnly = false,
   active,
   onNavigate,
   provider,
@@ -51,10 +54,10 @@ export function Topbar({
         <div className="topbar-brand">
           <a className="wordmark" href="#overview" onClick={(event) => { event.preventDefault(); onNavigate('overview'); }}>
             <BrandLogo />
-            <span>{copy.appName}</span>
+            <span>{localOnly ? 'Codex 用量统计' : copy.appName}</span>
           </a>
-          <div className="segmented provider-switch" role="group" aria-label="Provider">
-            {providers.map((item) => (
+          <div hidden={localOnly} className="segmented provider-switch" role="group" aria-label="Provider">
+            {providers.filter(item => item.enabled).map((item) => (
               <button
                 key={item.id}
                 type="button"
@@ -71,7 +74,7 @@ export function Topbar({
         </div>
 
         <nav className="topnav" aria-label="Sections">
-          {NAV.map((item) => (
+          {NAV.filter((item) => localOnly ? item.id !== 'cloud' : item.id !== 'reports').map((item) => (
             <button
               key={item.id}
               type="button"
@@ -79,7 +82,7 @@ export function Topbar({
               aria-current={item.id === active ? 'page' : undefined}
               onClick={() => onNavigate(item.id)}
             >
-              {item.label}
+              {localOnly ? ({overview: '总览', reports: '周报与月报', chats: '聊天明细', models: '模型', cloud: '云任务'}[item.id]) : item.label}
             </button>
           ))}
         </nav>
@@ -88,7 +91,7 @@ export function Topbar({
           {sync ? <DeviceStatusMenu sync={sync} now={now} /> : null}
           <span className={`status-pill ${connected ? 'online' : 'offline'}`}>
             <i aria-hidden="true" />
-            {connected ? (planType ? `${sentence(planType)} plan` : 'Connected') : copy.offline}
+            {localOnly ? (connected ? '当前账号 · 本机' : '等待当前账号登录') : connected ? (planType ? `${sentence(planType)} plan` : 'Connected') : copy.offline}
           </span>
           <span className="updated-at">Updated {clock(updatedAt)}</span>
           <button

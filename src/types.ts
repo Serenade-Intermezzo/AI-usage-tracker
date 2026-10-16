@@ -335,6 +335,8 @@ export interface AccountSummary {
 export type CloudTaskStatus = 'available' | 'unavailable' | 'disabled' | 'unsupported';
 
 export interface DashboardOverview {
+  accountScope?: {enabled:boolean;boundAccount:string;monitoringSince:number;officialFiles:number;otherProviderFiles:number;otherAccountFiles:number;unverifiedFiles:number;otherSurfaceFiles:number;homes:Array<{label:string;matches:boolean}>;note:string;};
+  trackingScope?: 'local' | 'account';
   provider: ProviderId;
   generatedAt: number;
   connection: {

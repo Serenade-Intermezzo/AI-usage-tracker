@@ -2,6 +2,7 @@ import { compact, modelLabel, usd } from '../format';
 import type { ModelEfficiency, ModelUsageSummary } from '../types';
 
 interface ModelLedgerProps {
+  localOnly?: boolean;
   usage: ModelUsageSummary[];
   efficiency: ModelEfficiency[];
 }
@@ -15,7 +16,7 @@ const STACK: Array<{ key: StackKey; label: string; color: string }> = [
   { key: 'output', label: 'Output', color: 'var(--ramp-3)' }
 ];
 
-export function ModelLedger({ usage, efficiency }: ModelLedgerProps) {
+export function ModelLedger({ usage, efficiency, localOnly = false }: ModelLedgerProps) {
   const efficiencyByModel = new Map(efficiency.map((row) => [row.model, row]));
   const rows = usage
     .filter((row) => row.model !== 'unknown')
@@ -42,7 +43,7 @@ export function ModelLedger({ usage, efficiency }: ModelLedgerProps) {
       <header className="panel-head">
         <div>
           <h3 id="ledger-title">Models</h3>
-          <p>Tokens, API-equivalent price, and how far each model stretches the quota</p>
+          <p>{localOnly ? '各模型的 Token 用量' : 'Tokens, API-equivalent price, and how far each model stretches the quota'}</p>
         </div>
         <ul className="stack-legend" aria-label="Token stack legend">
           {stack.map((item) => (
@@ -61,9 +62,9 @@ export function ModelLedger({ usage, efficiency }: ModelLedgerProps) {
                 <th scope="col">Model</th>
                 <th scope="col" className="ledger-tokens">Tokens</th>
                 <th scope="col" className="num">API equivalent</th>
-                <th scope="col" className="num" title="How many five-hour windows of quota this model consumed over the last 15 days">Windows used</th>
-                <th scope="col" className="num" title="Tokens processed for each 1% of a 5-hour window">Tokens per 1%</th>
-                <th scope="col" className="num" title="Active task minutes for each 1% of a 5-hour window">Minutes per 1%</th>
+                <th hidden={localOnly} scope="col" className="num" title="How many five-hour windows of quota this model consumed over the last 15 days">Windows used</th>
+                <th hidden={localOnly} scope="col" className="num" title="Tokens processed for each 1% of a 5-hour window">Tokens per 1%</th>
+                <th hidden={localOnly} scope="col" className="num" title="Active task minutes for each 1% of a 5-hour window">Minutes per 1%</th>
               </tr>
             </thead>
             <tbody>
@@ -93,13 +94,13 @@ export function ModelLedger({ usage, efficiency }: ModelLedgerProps) {
                       </div>
                     </td>
                     <td className="num">{row.estimatedApiCostUsd > 0 ? usd(row.estimatedApiCostUsd) : <span className="muted">no price</span>}</td>
-                    <td className="num">
+                    <td hidden={localOnly} className="num">
                       {row.efficiency ? (row.efficiency.estimatedUsagePercent / 100).toFixed(1) : <span className="muted">-</span>}
                     </td>
-                    <td className={`num ${isBest ? 'is-best' : ''}`}>
+                    <td hidden={localOnly} className={`num ${isBest ? 'is-best' : ''}`}>
                       {tokensPerPercent !== null ? compact(tokensPerPercent, 1) : <span className="muted">-</span>}
                     </td>
-                    <td className="num">
+                    <td hidden={localOnly} className="num">
                       {row.efficiency?.minutesPerPercent != null ? row.efficiency.minutesPerPercent.toFixed(2) : <span className="muted">-</span>}
                     </td>
                   </tr>
@@ -109,7 +110,7 @@ export function ModelLedger({ usage, efficiency }: ModelLedgerProps) {
           </table>
         </div>
       )}
-      <p className="panel-foot">
+      <p hidden={localOnly} className="panel-foot">
         Quota columns use 5-hour windows from the last 15 days. A higher tokens-per-1% figure means the model is cheaper on your limit.
       </p>
     </section>

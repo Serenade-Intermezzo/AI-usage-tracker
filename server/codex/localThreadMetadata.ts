@@ -78,8 +78,7 @@ export function classifyThreadSource(
   return { source: rawSource ? 'unknown' : 'unknown', sourceLabel: label };
 }
 
-export function readLocalThreadMetadata(): LocalThreadMetadata[] {
-  const codexHome = path.resolve(process.env.CODEX_HOME || path.join(os.homedir(), '.codex'));
+export function readLocalThreadMetadata(codexHome = path.resolve(process.env.CODEX_HOME || path.join(os.homedir(), '.codex'))): LocalThreadMetadata[] {
   const statePath = path.join(codexHome, 'state_5.sqlite');
   if (!fs.existsSync(statePath)) return [];
 

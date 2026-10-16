@@ -8,7 +8,8 @@
     "build": "tsc -p tsconfig.server.json && vite build",
     "start": "node dist-server/index.js",
     "test": "tsx --test server/tests.ts",
-    "typecheck": "tsc --noEmit && tsc -p tsconfig.server.json --noEmit"
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.server.json --noEmit",
+    "build:native": "tsc -p tsconfig.server.json"
   },
   "dependencies": {
     "dotenv": "^17.2.2",
