@@ -1,6 +1,12 @@
-Codex Usage Tracker 0.2.1 — Native Qt desktop GUI
+Codex Usage Tracker 0.2.2 — Native Qt desktop GUI
 
 The UI uses Qt Widgets, QFluentWidgets and Qt Charts; no browser or WebView.
+
+Window controls
+Use the upper-right minimize, maximize/restore and close buttons. F11 toggles
+full screen; Esc restores the previous normal or maximized state. Small/HiDPI
+displays scroll page content instead of forcing the window beyond the screen.
+Charts include a team usage-share pie with monthly, weekly and lifetime views.
 
 Team workflow
 1. Install on one computer, open 设置, and choose 作为汇总中心.

@@ -1,6 +1,8 @@
 """Locally painted Qt Charts and a QWidget activity heatmap."""
 
 from datetime import datetime, timedelta, timezone
+from qfluentwidgets import ComboBox
+from .utils import compact
 import math
 
 from PyQt5.QtCore import Qt, QRectF, QMargins
@@ -11,6 +13,8 @@ from PyQt5.QtWidgets import (
     QScrollArea,
     QToolTip,
     QVBoxLayout,
+    QHBoxLayout,
+    QGraphicsSimpleTextItem,
     QWidget,
     QApplication,
 )
@@ -22,6 +26,7 @@ from PyQt5.QtChart import (
     QChartView,
     QHorizontalStackedBarSeries,
     QValueAxis,
+    QPieSeries,
 )
 
 SHANGHAI = timezone(timedelta(hours=8))
@@ -259,6 +264,138 @@ class ModelChart(QChartView):
         old.deleteLater()
 
 
+class MemberPie(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.members = []
+        self.rows = []
+        self.period = "month"
+        self.total = 0
+        self.series = None
+        box = QVBoxLayout(self)
+        box.setContentsMargins(0, 0, 0, 0)
+        toolbar = QHBoxLayout()
+        toolbar.addStretch()
+        self.period_combo = ComboBox()
+        for title, key in [("本月", "month"), ("本周", "week"), ("累计", "total")]:
+            self.period_combo.addItem(title, userData=key)
+        self.period_combo.currentIndexChanged.connect(self.period_changed)
+        toolbar.addWidget(self.period_combo)
+        box.addLayout(toolbar)
+        row = QHBoxLayout()
+        self.view = QChartView(chart_base())
+        self.view.setRenderHint(QPainter.Antialiasing)
+        self.view.setMinimumSize(300, 280)
+        self.view.setBackgroundBrush(QBrush(Qt.white))
+        row.addWidget(self.view, 1)
+        self.legend = QVBoxLayout()
+        self.legend.setSpacing(12)
+        row.addLayout(self.legend, 1)
+        box.addLayout(row)
+
+    def period_changed(self):
+        self.period = self.period_combo.currentData() or "month"
+        self.set_members(self.members)
+
+    def set_members(self, members):
+        self.members = list(members)
+        self.rows = sorted(
+            [
+                {"id": m["id"], "name": m["name"], "tokens": int(m.get(self.period, 0))}
+                for m in members
+            ],
+            key=lambda m: m["tokens"],
+            reverse=True,
+        )
+        self.total = sum(m["tokens"] for m in self.rows)
+        while self.legend.count():
+            item = self.legend.takeAt(0)
+            if item.widget():
+                item.widget().hide()
+                item.widget().deleteLater()
+            if item.layout():
+                while item.layout().count():
+                    child = item.layout().takeAt(0)
+                    if child.widget():
+                        child.widget().hide()
+                        child.widget().deleteLater()
+                item.layout().deleteLater()
+        chart = chart_base()
+        self.series = QPieSeries()
+        self.series.setHoleSize(0.50)
+        palette = [
+            "#387d70",
+            "#76a48d",
+            "#afc59e",
+            "#698997",
+            "#b3bfc1",
+            "#c1ac8c",
+            "#79955d",
+            "#568a9d",
+        ]
+        for index, member in enumerate(self.rows):
+            value = member["tokens"]
+            color = palette[index % len(palette)]
+            share = value / self.total if self.total else 0
+            if value > 0:
+                segment = self.series.append(member["name"], value)
+                segment.setColor(QColor(color))
+                segment.setBorderColor(QColor("white"))
+                segment.setBorderWidth(3)
+                segment.hovered.connect(
+                    lambda active, m=member, p=share: (
+                        QToolTip.showText(
+                            QCursor.pos(),
+                            f"{m['name']}\n{m['tokens']:,} Token · {p:.1%}",
+                            self,
+                        )
+                        if active
+                        else QToolTip.hideText()
+                    )
+                )
+            line = QHBoxLayout()
+            dot = QLabel("●")
+            dot.setStyleSheet("color:" + color)
+            line.addWidget(dot)
+            name = QLabel()
+            name.setTextFormat(Qt.PlainText)
+            name.setText(
+                name.fontMetrics().elidedText(member["name"], Qt.ElideRight, 190)
+            )
+            name.setMaximumWidth(200)
+            name.setToolTip(member["name"])
+            line.addWidget(name, 1)
+            value_label = QLabel(f"{compact(value)}   {share:.1%}")
+            value_label.setToolTip(f"{value:,} Token")
+            line.addWidget(value_label)
+            self.legend.addLayout(line)
+        if not self.rows:
+            empty = QLabel("暂无成员用量", objectName="muted")
+            self.legend.addWidget(empty)
+        self.legend.addStretch()
+        chart.addSeries(self.series)
+        label = QGraphicsSimpleTextItem(
+            compact(self.total) if self.total else "—", chart
+        )
+        font = QFont(QApplication.font())
+        font.setPixelSize(26)
+        font.setWeight(QFont.Medium)
+        label.setFont(font)
+        label.setBrush(QColor("#315957"))
+
+        def center_label(area):
+            size = label.boundingRect()
+            label.setPos(
+                area.center().x() - size.width() / 2,
+                area.center().y() - size.height() / 2,
+            )
+
+        chart.plotAreaChanged.connect(center_label)
+        old = self.view.chart()
+        self.view.setChart(chart)
+        old.deleteLater()
+
+
 class ChartsPanel(QScrollArea):
     def __init__(self):
         super().__init__()
@@ -268,13 +405,15 @@ class ChartsPanel(QScrollArea):
         layout = QVBoxLayout(content)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(18)
+        self.pie = MemberPie()
         self.daily = DailyChart()
         self.activity = ActivityHeatmap()
         self.models = ModelChart()
-        for title, note, widget in [
-            ("每日用量", "近 14 天", self.daily),
-            ("活跃时段", "近 30 天 · 北京时间", self.activity),
-            ("模型用量", "所选范围累计 · 输入与输出构成", self.models),
+        for title, widget in [
+            ("全体成员用量占比", self.pie),
+            ("每日用量 · 近 14 天", self.daily),
+            ("活跃时段 · 近 30 天", self.activity),
+            ("模型用量", self.models),
         ]:
             frame = QFrame(objectName="report")
             box = QVBoxLayout(frame)
@@ -282,9 +421,6 @@ class ChartsPanel(QScrollArea):
             heading = QLabel(title)
             heading.setObjectName("chartHeading")
             box.addWidget(heading)
-            label = QLabel(note)
-            label.setObjectName("muted")
-            box.addWidget(label)
             box.addWidget(widget)
             layout.addWidget(frame)
         layout.addStretch()

@@ -16,9 +16,9 @@ import unittest
 from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QEvent, QCoreApplication
 from PyQt5.QtTest import QTest
-from PyQt5.QtWidgets import QComboBox, QTableWidget
+from PyQt5.QtWidgets import QApplication, QComboBox, QTableWidget
 
 import sys
 
@@ -226,6 +226,13 @@ class NativeTests(unittest.TestCase):
         cls.server.server_close()
         cls.thread.join()
         cls.directory.cleanup()
+        # Destroy native charts while Qt is alive, before Python tears down wrappers.
+        for widget in QApplication.topLevelWidgets():
+            widget.close()
+            widget.deleteLater()
+        QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
+        APP.processEvents()
+        gc.collect()
 
     def wait_for(self, predicate):
         deadline = time.monotonic() + 5
@@ -384,6 +391,97 @@ class NativeTests(unittest.TestCase):
         self.assertEqual(w.stack.currentIndex(), 0)
         QTest.mouseClick(w.home_tab.itemWidget, Qt.LeftButton)
         self.assertEqual(w.stack.currentIndex(), 4)
+
+    def test_standard_window_controls_minimize_maximize_restore_and_close(self):
+        w = self.window()
+        self.prepare_normal_window(w)
+        original = w.size()
+        self.assertTrue(w.titlebar.minimize_button.isVisible())
+        self.assertTrue(w.titlebar.maximize_button.isVisible())
+        self.assertTrue(w.titlebar.close_button.isVisible())
+        QTest.mouseClick(w.titlebar.maximize_button, Qt.LeftButton)
+        self.wait_for(w.isMaximized)
+        self.wait_for(lambda: w.geometry() == w.screen().availableGeometry())
+        for page in range(w.stack.count()):
+            w.show_page(page)
+            APP.processEvents()
+            self.assertEqual(w.geometry(), w.screen().availableGeometry())
+        self.assertEqual(w.titlebar.maximize_button.toolTip(), "还原")
+        QTest.mouseClick(w.titlebar.maximize_button, Qt.LeftButton)
+        self.wait_for(lambda: not w.isMaximized())
+        self.wait_for(lambda: w.size() == original)
+        self.assertEqual(w.titlebar.maximize_button.toolTip(), "最大化")
+        QTest.mouseClick(w.titlebar.minimize_button, Qt.LeftButton)
+        self.wait_for(w.isMinimized)
+        QTest.qWait(250)
+        w.showNormal()
+        w.activateWindow()
+        self.wait_for(lambda: not w.isMinimized())
+        QTest.mouseClick(w.titlebar.close_button, Qt.LeftButton)
+        self.assertFalse(w.isVisible())
+        self.assertFalse(w.timer.isActive())
+        self.assertFalse(w.active_requests)
+
+    def test_fullscreen_covers_screen_and_restores_normal_and_maximized(self):
+        w = self.window()
+        self.prepare_normal_window(w)
+        w.activateWindow()
+        QTest.qWait(100)
+        original = w.geometry()
+        QTest.keyClick(w, Qt.Key_F11)
+        self.wait_for(w.isFullScreen)
+        self.wait_for(lambda: w.geometry() == w.screen().geometry())
+        self.assertEqual(w.titlebar.maximize_button.toolTip(), "还原")
+        QTest.keyClick(w, Qt.Key_Escape)
+        self.wait_for(lambda: not w.isFullScreen())
+        self.wait_for(lambda: w.geometry() == original)
+        self.assertFalse(w.isMaximized())
+        w.showMaximized()
+        self.wait_for(lambda: w.geometry() == w.screen().availableGeometry())
+
+        QTest.keyClick(w, Qt.Key_F11)
+        self.wait_for(lambda: w.isFullScreen() and w.geometry() == w.screen().geometry())
+        QTest.keyClick(w, Qt.Key_F11)
+        self.wait_for(lambda: w.isMaximized() and not w.isFullScreen())
+        self.wait_for(lambda: w.geometry() == w.screen().availableGeometry())
+        w.titlebar.toggle_fullscreen()
+        self.wait_for(w.isFullScreen)
+        QTest.mouseClick(w.titlebar.maximize_button, Qt.LeftButton)
+        self.wait_for(lambda: w.isMaximized() and not w.isFullScreen())
+        self.wait_for(lambda: w.geometry() == w.screen().availableGeometry())
+
+    def prepare_normal_window(self, w):
+        # Desktop policies may initially maximize newly opened application windows.
+        QTest.qWait(250)
+        w.showNormal()
+        self.wait_for(lambda: not w.isMaximized())
+        available = w.screen().availableGeometry()
+        w.resize(min(980, available.width() - 40), min(620, available.height() - 40))
+        QTest.qWait(250)
+
+    def test_member_pie_uses_all_members_and_switches_month_week_lifetime(self):
+        w = self.window()
+        pie = w.charts.pie
+        pie.set_members(
+            [
+                {"id": "a", "name": "Alice", "month": 100, "week": 50, "total": 700},
+                {"id": "b", "name": "Bob", "month": 300, "week": 50, "total": 300},
+            ]
+        )
+        self.assertEqual(pie.total, 400)
+        self.assertEqual([s.value() for s in pie.series.slices()], [300, 100])
+        self.assertAlmostEqual(pie.series.slices()[0].percentage(), 0.75)
+        pie.period_combo.setCurrentIndex(pie.period_combo.findData("week"))
+        self.assertEqual(pie.total, 100)
+        self.assertEqual([s.value() for s in pie.series.slices()], [50, 50])
+        pie.period_combo.setCurrentIndex(pie.period_combo.findData("total"))
+        self.assertEqual(pie.total, 1000)
+        pie.set_members(
+            [{"id": "zero", "name": "No usage", "month": 0, "week": 0, "total": 0}]
+        )
+        self.assertEqual(pie.series.count(), 0)
+        self.assertEqual(pie.total, 0)
+        self.assertFalse(w.subtitle.isVisible())
 
     def test_collector_calendar_is_readonly_and_updates_even_with_an_old_draft(self):
         w = self.window()

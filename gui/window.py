@@ -198,15 +198,6 @@ class UsageWindow(QMainWindow):
                 4: "用量概览",
             }[index]
         )
-        self.subtitle.setText(
-            {
-                0: "按统一周期，查看每个人和团队的用量。",
-                1: "只有这台电脑上的聊天会显示在这里。",
-                2: "用量随时间、活跃时段与模型的变化。",
-                3: "成员归属清晰，设备状态一眼可见。",
-                4: "每一位成员，每一台设备，清楚汇总。",
-            }[index]
-        )
 
     def set_mode(self, mode: str):
         self.mode = mode
@@ -259,6 +250,7 @@ class UsageWindow(QMainWindow):
         if reports.get("scope") == "team":
             self.charts.set_data(reports.get("overview", {}))
             self.update_team_tables(reports)
+            self.charts.pie.set_members(reports.get("members", []))
             self.details.setText(
                 "团队报表仅包含已登记设备、指定 OpenAI 账号的可确认 Codex GUI / CLI 事件。成员归属由设备登记确定。\n周报按周一至周日，月报采用汇总中心统一起始日；离线补传后会更新历史报表。聊天正文、标题和项目路径不上传。"
             )
@@ -410,6 +402,7 @@ class UsageWindow(QMainWindow):
         if selected != "local" and self.stack.currentIndex() == 1:
             self.show_page(0)
         self.charts.set_data({})
+        self.charts.pie.set_members([])
         self.home_daily.set_data([])
         self.refresh()
 

@@ -7,6 +7,8 @@ from PyQt5.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QScrollArea,
+    QSizePolicy,
     QStackedWidget,
     QStyledItemDelegate,
     QToolButton,
@@ -26,6 +28,7 @@ from qfluentwidgets import (
 )
 from .charts import ChartsPanel, DailyChart
 from .utils import compact, ROOT
+from .titlebar import WindowTitleBar
 
 STYLE = """
 QMainWindow, QWidget#root, QWidget#content {background:#f4f7f8;color:#213c40;}
@@ -179,13 +182,25 @@ PrimaryPushButton:disabled {background:#edf2ef;color:#9dafaa;}
 
 
 def build_window(w):
+    w.setWindowFlag(Qt.FramelessWindowHint, True)
     w.setWindowTitle("Codex · 用量统计")
     w.setWindowIcon(QIcon(str(ROOT / "public" / "ai-usage-tracker.ico")))
-    w.resize(1360, 940)
-    w.setMinimumSize(1180, 800)
+    available = w.screen().availableGeometry()
+    w.resize(
+        min(1360, int(available.width() * 0.9)),
+        min(940, int(available.height() * 0.9)),
+    )
+    w.setMinimumSize(760, 520)
     root = QWidget(objectName="root")
     w.setCentralWidget(root)
-    outer = QHBoxLayout(root)
+    root_box = QVBoxLayout(root)
+    root_box.setContentsMargins(0, 0, 0, 0)
+    root_box.setSpacing(0)
+    w.titlebar = WindowTitleBar(w)
+    root_box.addWidget(w.titlebar)
+    canvas = QWidget()
+    root_box.addWidget(canvas, 1)
+    outer = QHBoxLayout(canvas)
     outer.setContentsMargins(0, 0, 0, 0)
     outer.setSpacing(0)
     sidebar = QFrame(objectName="sidebar")
@@ -196,8 +211,6 @@ def build_window(w):
     brand = QLabel("◈  Codex", objectName="brand")
     brand.setContentsMargins(15, 0, 0, 0)
     side.addWidget(brand)
-    caption = QLabel("    团队用量工作台", objectName="muted")
-    side.addWidget(caption)
     w.nav = NavigationInterface(
         showMenuButton=False, showReturnButton=False, collapsible=False
     )
@@ -240,7 +253,8 @@ def build_window(w):
     headings.setSpacing(5)
     w.page_title = QLabel("用量概览", objectName="heading")
     headings.addWidget(w.page_title)
-    w.subtitle = QLabel("每一位成员，每一台设备，清楚汇总。", objectName="muted")
+    w.subtitle = QLabel(objectName="muted")
+    w.subtitle.hide()
     headings.addWidget(w.subtitle)
     header.addLayout(headings)
     header.addStretch()
@@ -260,10 +274,20 @@ def build_window(w):
     scope_row.addWidget(w.scope)
     scope_row.addStretch()
     w.coverage_label = QLabel("北京时间 · 统一周期", objectName="muted")
+    w.coverage_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
     scope_row.addWidget(w.coverage_label)
     body.addLayout(scope_row)
     w.stack = QStackedWidget()
     body.addWidget(w.stack, 1)
+
+    def add_scroll_page(page):
+        # Page content may exceed a small/HiDPI display; the window must still fit.
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setWidget(page)
+        w.stack.addWidget(scroll)
+
     # Period report page (index 0).
     report_page = QWidget()
     report_layout = QVBoxLayout(report_page)
@@ -312,7 +336,7 @@ def build_window(w):
     w.report_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
     b.addWidget(w.report_table, 1)
     report_layout.addWidget(f, 1)
-    w.stack.addWidget(report_page)
+    add_scroll_page(report_page)
     # Local chat page (index 1).
     f, b = card()
     b.addWidget(QLabel("本机聊天", objectName="chartHeading"))
@@ -365,7 +389,7 @@ def build_window(w):
     w.team_note = QLabel("在设置中建立团队或加入汇总中心。", objectName="muted")
     w.team_note.setWordWrap(True)
     team_box.addWidget(w.team_note)
-    w.stack.addWidget(team_page)
+    add_scroll_page(team_page)
     # Overview (index 4): one focal metric, trend, member comparison and coverage.
     home = QWidget()
     home_box = QVBoxLayout(home)
@@ -385,20 +409,17 @@ def build_window(w):
         b.addWidget(QLabel(title, objectName="muted"))
         w.home_amounts[index] = QLabel("—", objectName="amount")
         b.addWidget(w.home_amounts[index])
-        b.addWidget(QLabel("Token", objectName="muted"))
         row.addWidget(f, 3)
     home_box.addLayout(row)
     row = QHBoxLayout()
     row.setSpacing(18)
     f, b = card()
-    b.addWidget(QLabel("用量趋势", objectName="chartHeading"))
-    b.addWidget(QLabel("最近 7 天 · Token", objectName="muted"))
+    b.addWidget(QLabel("用量趋势 · 近 7 天", objectName="chartHeading"))
     w.home_daily = DailyChart(days=7)
     b.addWidget(w.home_daily, 1)
     row.addWidget(f, 3)
     f, b = card()
-    b.addWidget(QLabel("成员用量分布", objectName="chartHeading"))
-    b.addWidget(QLabel("全体成员 · 本月用量", objectName="muted"))
+    b.addWidget(QLabel("成员本月用量", objectName="chartHeading"))
     w.contributions = Contributions()
     b.addWidget(w.contributions, 1)
     members = PushButton("查看成员与设备  →")
@@ -409,7 +430,7 @@ def build_window(w):
     w.coverage_notice = QLabel("正在读取设备同步情况…", objectName="notice")
     w.coverage_notice.setWordWrap(True)
     home_box.addWidget(w.coverage_notice)
-    w.stack.addWidget(home)
+    add_scroll_page(home)
     footer = QHBoxLayout()
     w.detail_button = QToolButton()
     w.detail_button.setText("统计口径")
@@ -420,7 +441,8 @@ def build_window(w):
     footer.addWidget(w.detail_button)
     footer.addStretch()
     w.hint = QLabel("北京时间 · 输入已包含缓存", objectName="muted")
-    footer.addWidget(w.hint)
+    w.hint.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+    footer.addWidget(w.hint, 1, Qt.AlignRight)
     body.addLayout(footer)
     w.details = QLabel(objectName="muted")
     w.details.setWordWrap(True)
