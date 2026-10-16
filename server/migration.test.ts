@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
-import { claudeLegacyPartId } from './claude/sessionLogs.js';
 import { createUsageStore } from './db.js';
 import { codexPartId } from './sessionLogs.js';
 import { removeDir, tempDir } from './testSupport.js';
@@ -126,15 +125,7 @@ test('an existing single-device database is migrated in place without losing his
   }
 });
 
-test('legacy Claude rows map onto path-independent part ids', () => {
-  assert.equal(
-    claudeLegacyPartId('C:\\Users\\me\\.claude\\projects\\C--repo\\11111111-2222-4333-8444-555555555555.jsonl'),
-    'C--repo/11111111-2222-4333-8444-555555555555.jsonl'
-  );
-  assert.equal(
-    claudeLegacyPartId('/home/me/.claude/projects/-home-me-repo/11111111-2222-4333-8444-555555555555.jsonl#sidechain'),
-    '-home-me-repo/11111111-2222-4333-8444-555555555555.jsonl#sidechain'
-  );
+test('legacy Codex rows map onto path-independent part ids', () => {
   assert.equal(codexPartId('C:\\Users\\me\\.codex\\archived_sessions\\rollout-x.jsonl'), 'rollout-x.jsonl');
   assert.equal(codexPartId('/home/me/.codex/sessions/2026/07/27/rollout-x.jsonl'), 'rollout-x.jsonl');
 });

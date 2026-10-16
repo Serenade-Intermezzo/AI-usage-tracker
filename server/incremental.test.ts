@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
-import { claudeSessionSource } from './claude/sessionLogs.js';
 import { createUsageStore, type UsageStore } from './db.js';
 import { indexSessionFile, scanAllSessions, type SessionSource } from './sessionScan.js';
 import { codexSessionSource } from './sessionLogs.js';
@@ -174,72 +173,6 @@ test('a rollout moved into archived_sessions is not counted twice', async () => 
     assert.equal(target.getThreadSummaries()[0].partCount, 1);
   } finally {
     target.close();
-    removeDir(directory);
-  }
-});
-
-const SESSION = '11111111-2222-4333-8444-555555555555';
-
-function claudeAssistant(uuid: string, timestamp: number, messageId: string, block: number) {
-  return {
-    type: 'assistant',
-    uuid,
-    timestamp: iso(timestamp),
-    sessionId: SESSION,
-    cwd: '/repo',
-    entrypoint: 'cli',
-    message: {
-      id: messageId,
-      model: 'claude-fable-5-1',
-      role: 'assistant',
-      content: [{ type: block === 0 ? 'text' : 'tool_use' }],
-      usage: { input_tokens: 3, cache_creation_input_tokens: 500, cache_read_input_tokens: 9_000, output_tokens: 120 + block }
-    }
-  };
-}
-
-function claudeUser(uuid: string, timestamp: number, text: string, promptId: string) {
-  return { type: 'user', uuid, timestamp: iso(timestamp), sessionId: SESSION, cwd: '/repo', entrypoint: 'cli', promptId, message: { role: 'user', content: text } };
-}
-
-test('Claude streaming records split across two scans are still counted once', async () => {
-  const directory = tempDir('incremental-claude');
-  const incremental = store(directory, 'incremental', 'claude');
-  const fresh = store(directory, 'fresh', 'claude');
-  try {
-    const projects = path.join(directory, 'projects');
-    const source = claudeSessionSource(projects);
-    const file = path.join(projects, '-repo', `${SESSION}.jsonl`);
-    fs.mkdirSync(path.dirname(file), { recursive: true });
-    const start = baseTime(1);
-    // The scan runs after the first content block of msg_1 was written...
-    fs.writeFileSync(file, `${lines([
-      claudeUser('u1', start, 'First request', 'turn-1'),
-      claudeAssistant('a1', start + 2, 'msg_1', 0)
-    ])}\n`);
-    await indexSessionFile(incremental, source, file);
-    // ...and the second block (same message, same usage) arrives with the next reply.
-    fs.appendFileSync(file, `${lines([
-      claudeAssistant('a2', start + 3, 'msg_1', 1),
-      { type: 'system', subtype: 'turn_duration', durationMs: 9_000, timestamp: iso(start + 9), sessionId: SESSION, uuid: 's1' },
-      claudeUser('u2', start + 30, 'Second request', 'turn-2'),
-      claudeAssistant('a3', start + 33, 'msg_2', 0),
-      { type: 'ai-title', aiTitle: 'Split transcript', sessionId: SESSION }
-    ])}\n`);
-    assert.equal(await indexSessionFile(incremental, source, file), 'incremental');
-    await indexSessionFile(fresh, source, file);
-
-    assert.deepEqual(snapshot(incremental), snapshot(fresh));
-    const events = incremental.getTokenEventsBetween(0, Number.MAX_SAFE_INTEGER);
-    assert.equal(events.length, 2);
-    const [thread] = incremental.getThreadSummaries();
-    assert.equal(thread.title, 'Split transcript');
-    assert.equal(thread.prompts.length, 2);
-    assert.equal(thread.prompts[0].durationMs, 9_000);
-    assert.equal(thread.totalTokens, 2 * (9_503 + 120));
-  } finally {
-    incremental.close();
-    fresh.close();
     removeDir(directory);
   }
 });

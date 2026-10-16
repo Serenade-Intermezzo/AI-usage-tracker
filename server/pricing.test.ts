@@ -78,30 +78,6 @@ test('prices GPT-6.1 Sol cache writes and the long-context threshold', () => {
   assert.ok(actualLong !== null && Math.abs(actualLong - longCost) < 1e-12);
 });
 
-test('prices Claude cache writes and reads separately from fresh input', () => {
-  const usage: TokenUsage = {
-    inputTokens: 11_100,
-    cachedInputTokens: 10_000,
-    cacheWriteInputTokens: 1_000,
-    cacheWrite1hInputTokens: 1_000,
-    outputTokens: 100,
-    reasoningOutputTokens: 20,
-    totalTokens: 11_200
-  };
-  // 100 fresh at $10, 10k cache reads at $0.25, 1k one-hour writes at $20, 100 output at $50.
-  const expected = (100 * 10 + 10_000 * 0.25 + 1_000 * 20 + 100 * 50) / 1_000_000;
-  const actual = estimateUsageCost('claude-fable-5-1', usage);
-  assert.ok(actual !== null && Math.abs(actual - expected) < 1e-12, `cost was ${actual}`);
-
-  // Five-minute writes bill at 1.25x, and the [1m] marker Claude Code appends is ignored.
-  const fiveMinute = estimateUsageCost('claude-opus-5[1m]', { ...usage, cacheWrite1hInputTokens: 0 });
-  const expectedOpus = (100 * 5 + 10_000 * 0.5 + 1_000 * 6.25 + 100 * 25) / 1_000_000;
-  assert.ok(fiveMinute !== null && Math.abs(fiveMinute - expectedOpus) < 1e-12, `cost was ${fiveMinute}`);
-
-  // Dated snapshot ids resolve through the alias prefix rule.
-  assert.ok(estimateUsageCost('claude-haiku-4-5-20251001', usage) !== null);
-});
-
 test('charges cache writes at the input rate for models without a cache-write price', () => {
   const usage: TokenUsage = {
     inputTokens: 100_000,

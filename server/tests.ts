@@ -1,17 +1,9 @@
-import './threadUsage.test.js';
-import './cloudTasks.test.js';
-import './analytics.test.js';
-import './codex/normalize.test.js';
 import './codex/localThreadMetadata.test.js';
 import './pricing.test.js';
 import './sessionLogs.test.js';
-import './claude/normalize.test.js';
-import './claude/messageText.test.js';
-import './claude/sessionLogs.test.js';
 import './db.test.js';
 import './migration.test.js';
 import './incremental.test.js';
-import './windows.test.js';
 import './sync.test.js';
 import './config.test.js';
 

@@ -10,16 +10,13 @@ import { authorized } from './sync/server.js';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
-import { createDisabledClaudeProvider } from './disabledClaude.js';
 import { createCodexProvider } from './codex/provider.js';
 import { ConfigError, flagEnv, loadTrackerConfig, type TrackerConfig } from './config.js';
-import { demoDevices, demoOverview, demoWindowDetail, demoWindows } from './demo.js';
-import { loadPricingConfig } from './pricing.js';
 import { isProviderId, providerInfo, type Provider, type ProviderRuntime } from './providers.js';
 import { createSyncClient } from './sync/client.js';
-import { createDeviceRegistry, deviceStatuses } from './sync/registry.js';
+import { createDeviceRegistry } from './sync/registry.js';
 import { createSyncRouter } from './sync/server.js';
-import type { ProviderId, SyncOverview } from './types.js';
+import type { ProviderId } from './types.js';
 
 function numberEnv(name: string, fallback: number): number {
   const value = Number(process.env[name]);
@@ -51,51 +48,13 @@ try {
 const version = readVersion();
 const port = Number(process.env.PORT || 8893);
 const host = config.listenHost;
-const demoMode = process.env.DEMO_MODE === 'true';
 const isCollector = config.role === 'collector';
 const registry = config.role === 'server' ? createDeviceRegistry(config.dataDir) : null;
 
-// Providers look up the device list and settled-through time through the
-// runtime; `providers` is assigned right below, before anything asks.
 let providers: Record<ProviderId, Provider>;
 
-function syncOverview(provider: ProviderId): SyncOverview {
-  const self = {
-    deviceId: config.deviceId,
-    label: config.deviceLabel,
-    role: config.role,
-    scannedThrough: (id: ProviderId) => providers[id].scannedThrough(),
-    providerEnabled: (id: ProviderId) => providers[id].enabled
-  };
-  if (!registry) {
-    return {
-      role: config.role,
-      deviceId: config.deviceId,
-      devices: [],
-      settledThrough: self.scannedThrough(provider),
-      multiDevice: false
-    };
-  }
-  const { devices, settledThrough } = deviceStatuses(provider, self, registry.list(), {
-    heartbeatMs: config.sync.heartbeatMs,
-    retireAfterDays: config.sync.retireAfterDays,
-    knownDeviceIds: providers[provider].store.getDeviceUsage()
-      .filter((row) => row.deviceId !== config.deviceId)
-      .map((row) => ({ deviceId: row.deviceId, lastEventAt: row.lastEventAt }))
-  });
-  return {
-    role: config.role,
-    deviceId: config.deviceId,
-    devices,
-    settledThrough,
-    multiDevice: devices.length > 1
-  };
-}
-
-if (config.role !== 'standalone') {
-  process.env.LOCAL_ONLY = 'true'; process.env.NATIVE_GUI_ONLY = 'true';
-  if (config.scanLocal) process.env.CODEX_ACCOUNT_SCOPE = 'true';
-}
+process.env.LOCAL_ONLY = 'true';
+if (config.scanLocal) process.env.CODEX_ACCOUNT_SCOPE = 'true';
 if (!process.env.CODEX_HOME) {
   const homes = ['.codex-desktop', '.codex'].map(name => path.join(os.homedir(), name));
   process.env.CODEX_HOME = homes.find(home => readLogin(home).mode === 'chatgpt') ?? homes[1];
@@ -105,11 +64,9 @@ const runtime: ProviderRuntime = {
   role: config.role,
   deviceId: config.deviceId,
   dataDir: config.dataDir,
-  pollAccount: config.quotaPolling,
   watchSessions: config.watchSessions,
   outbox: isCollector,
   scanLocal: config.scanLocal,
-  sync: syncOverview
 };
 
 // A previous upstream database may contain account-wide/unscoped records.
@@ -129,15 +86,9 @@ if (process.env.CODEX_ACCOUNT_SCOPE === 'true' && config.scanLocal &&
 providers = {
   codex: createCodexProvider({
     enabled: flagEnv(process.env, 'CODEX', true),
-    rateLimitPollMs: numberEnv('RATE_LIMIT_POLL_MS', 60_000),
-    accountUsagePollMs: numberEnv('ACCOUNT_USAGE_POLL_MS', 900_000),
     sessionScanMs: numberEnv('SESSION_SCAN_MS', 120_000),
-    threadMetadataPollMs: numberEnv('THREAD_METADATA_POLL_MS', 900_000),
-    cloudTaskPollMs: numberEnv('CLOUD_TASK_POLL_MS', 600_000),
-    cloudTasksEnabled: flagEnv(process.env, 'CLOUD_TASKS', true),
     runtime
-  }),
-  claude: createDisabledClaudeProvider()
+  })
 };
 
 const fingerprint = accountFingerprint(config.dataDir) ?? config.accountFingerprint;
@@ -146,11 +97,11 @@ if (config.role !== 'standalone' && (!fingerprint || (config.accountFingerprint 
 }
 const team = registry ? createTeam({
   dataDir: config.dataDir, accountFingerprint: fingerprint!, memberName: config.memberName, registry,
-  heartbeatMs: config.sync.heartbeatMs, selfScannedThrough: () => providers.codex.scannedThrough(), self: config.scanLocal ? {deviceId: config.deviceId,
+  heartbeatMs: config.sync.heartbeatMs, selfScannedThrough: () => providers.codex.scannedThrough(), selfError: () => providers.codex.health().error, self: config.scanLocal ? {deviceId: config.deviceId,
     memberId: config.memberId, installId: config.installId, label: config.deviceLabel} : null
 }) : null;
 
-const syncClient = isCollector && !demoMode
+const syncClient = isCollector
   ? createSyncClient({
       centralUrl: config.sync.centralUrl!,
       secret: config.sync.secret!,
@@ -329,30 +280,19 @@ function resolveProvider(
 ): Provider | null {
   const requested = typeof request.query.provider === 'string' ? request.query.provider : defaultProvider;
   if (!isProviderId(requested)) {
-    response.status(400).json({ error: `Unknown provider "${requested}". Use "codex" or "claude".` });
+    response.status(400).json({ error: `Unknown provider "${requested}". Use "codex".` });
     return null;
   }
   const provider = providers[requested];
-  if (!provider.enabled && !demoMode) {
+  if (!provider.enabled) {
     response.status(404).json({ error: `${provider.label} is turned off in .env.` });
     return null;
   }
   return provider;
 }
 
-function resolveDuration(request: express.Request, response: express.Response): number | null {
-  const value = Number(request.query.duration ?? 300);
-  if (value !== 300 && value !== 10_080) {
-    response.status(400).json({ error: 'duration must be 300 (5 hours) or 10080 (7 days).' });
-    return null;
-  }
-  return value;
-}
-
-function dashboardAvailable(_response: express.Response): boolean { return true; }
-
 // Reports use this machine's persisted token events; no account API is called.
-const localReports = process.env.LOCAL_ONLY === 'true' && !demoMode
+const localReports = process.env.LOCAL_ONLY === 'true'
   ? createLocalReports(config.dataDir, config.deviceId) : null;
 app.get('/api/local-reports', (_request, response) => {
   if (!localReports) { response.status(404).json({error: '仅本机模式支持周报与月报。'}); return; }
@@ -376,7 +316,6 @@ reportTimer?.unref();
 app.get('/api/health', (_request, response) => {
   response.json({
     ok: true,
-    demoMode,
     version,
     pid: process.pid,
     role: config.role,
@@ -399,21 +338,7 @@ app.get('/api/health', (_request, response) => {
     ),
     sync: syncClient?.status() ?? null,
     // Kept for older clients that read the Codex fields directly.
-    codexConnected: providers.codex.health().connected,
     error: providers.codex.health().error
-  });
-});
-
-app.get('/api/sync/status', (_request, response) => {
-  if (syncClient) {
-    response.json({ role: config.role, deviceId: config.deviceId, ...syncClient.status() });
-    return;
-  }
-  response.json({
-    role: config.role,
-    deviceId: config.deviceId,
-    instanceId: registry?.instanceId ?? null,
-    devices: registry?.list() ?? []
   });
 });
 
@@ -425,11 +350,9 @@ app.get('/api/providers', (_request, response) => {
 });
 
 app.get('/api/overview', (request, response) => {
-  if (!dashboardAvailable(response)) return;
   const provider = resolveProvider(request, response);
   if (!provider) return;
-  const overview = demoMode ? demoOverview(provider.id) : provider.overview();
-  if (provider.id !== 'codex' || demoMode) { response.json(overview); return; }
+  const overview = provider.overview();
   const events = readMeterEvents(config.dataDir).filter(e => e.device === config.deviceId);
   const chats = new Map<string, {inputTokens: number; cachedInputTokens: number; outputTokens: number; totalTokens: number}>();
   for (const event of events) {
@@ -441,65 +364,18 @@ app.get('/api/overview', (request, response) => {
     threads: overview.threads.filter(t => chats.has(t.threadId)).map(t => ({...t, ...chats.get(t.threadId)}))});
 });
 
-app.get('/api/windows', (request, response) => {
-  if (!dashboardAvailable(response)) return;
-  const provider = resolveProvider(request, response);
-  const duration = provider ? resolveDuration(request, response) : null;
-  if (!provider || duration === null) return;
-  response.json({ windows: demoMode ? demoWindows(duration) : provider.windows(duration) });
-});
-
-app.get('/api/windows/detail', (request, response) => {
-  if (!dashboardAvailable(response)) return;
-  const provider = resolveProvider(request, response);
-  const duration = provider ? resolveDuration(request, response) : null;
-  if (!provider || duration === null) return;
-  const resetsAt = Number(request.query.resetsAt);
-  if (!Number.isFinite(resetsAt) || resetsAt <= 0) {
-    response.status(400).json({ error: 'resetsAt must be a unix timestamp in seconds.' });
-    return;
-  }
-  const detail = demoMode ? demoWindowDetail(duration, resetsAt) : provider.windowDetail(duration, resetsAt);
-  if (!detail) {
-    response.status(404).json({ error: 'No stored samples for that window.' });
-    return;
-  }
-  response.json(detail);
-});
-
-app.get('/api/devices', (request, response) => {
-  if (!dashboardAvailable(response)) return;
-  const provider = resolveProvider(request, response);
-  if (!provider) return;
-  response.json(demoMode ? demoDevices() : syncOverview(provider.id));
-});
-
-app.get('/api/pricing', (_request, response) => {
-  response.json(loadPricingConfig());
-});
-
 app.post('/api/refresh', async (request, response) => {
   if (!localAdmin(request, response)) return;
   const provider = resolveProvider(request, response);
   if (!provider) return;
-  if (!demoMode) await provider.refresh();
-  if (isCollector && !demoMode) {
+  await provider.refresh();
+  if (isCollector) {
     await syncClient?.flush();
   }
-  response.json(demoMode ? demoOverview(provider.id) : provider.overview());
+  response.json(provider.overview());
 });
 
-const clientDist = path.resolve(currentDir, '../dist');
-if (process.env.NATIVE_GUI_ONLY !== 'true') {
-  app.use(express.static(clientDist));
-  app.use((request, response, next) => {
-    if (request.path.startsWith('/api/')) return next();
-    response.sendFile(path.join(clientDist, 'index.html'));
-  });
-} else {
-  app.get('/', (_request, response) => response.json({service:'Codex Usage Tracker', interface:'native Qt Widgets', scope:'local'}));
-}
-
+app.get('/', (_request, response) => response.json({service: 'Codex Usage Tracker', interface: 'native Qt Widgets'}));
 
 const where = `http://${host ?? 'localhost'}:${port}`;
 const onListening = (error?: Error) => {
@@ -517,12 +393,11 @@ const onListening = (error?: Error) => {
   );
   if (isCollector) console.log(`Sending usage to ${config.sync.centralUrl}; the outbox keeps it while the server is unreachable.`);
   if (config.role === 'server') console.log('Accepting usage from collectors at /api/sync.');
-  if (demoMode) console.log('DEMO_MODE is enabled.');
   if (localReports) { try { localReports.refresh(); team?.archive(); } catch { console.warn('Local reports will retry automatically'); } }
 };
 const httpServer = app.listen(port, host, onListening);
 
-if (!demoMode) {
+{
   for (const provider of Object.values(providers)) provider.start();
   syncClient?.start();
 }

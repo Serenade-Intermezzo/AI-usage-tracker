@@ -4,17 +4,10 @@ import type {
   DashboardOverview,
   ProviderId,
   ProviderInfo,
-  SyncOverview,
   TrackerRole,
-  WindowDetail,
-  WindowSummary
 } from './types.js';
 
-/**
- * A provider owns one usage store plus the polling that fills it. The Express
- * layer only ever talks to this interface, so Codex and Claude Code stay
- * interchangeable from the API's point of view.
- */
+/** Local Codex scanner and store exposed to the native app. */
 export interface Provider {
   readonly id: ProviderId;
   readonly label: string;
@@ -27,9 +20,6 @@ export interface Provider {
   refresh(): Promise<void>;
   overview(): DashboardOverview;
   health(): { connected: boolean; error: string | null };
-  /** Current and past quota windows of one duration, newest first. */
-  windows(durationMins: number): WindowSummary[];
-  windowDetail(durationMins: number, resetsAt: number): WindowDetail | null;
   /** Everything this machine logged before this time is indexed. */
   scannedThrough(): number | null;
   /** True while file-system notifications drive session indexing. */
@@ -41,15 +31,11 @@ export interface ProviderRuntime {
   role: TrackerRole;
   deviceId: string;
   dataDir: string;
-  /** Poll account-level quota, account details, and cloud tasks. */
-  pollAccount: boolean;
   /** Index transcripts as soon as they change, on top of the periodic scan. */
   watchSessions: boolean;
   /** Record local changes in the outbox for the central server (collectors). */
   outbox: boolean;
   scanLocal?: boolean;
-  /** Device list and the settled-through time for a provider's overview. */
-  sync(provider: ProviderId): SyncOverview;
 }
 
 /**
@@ -64,16 +50,8 @@ export function standaloneRuntime(overrides: Partial<ProviderRuntime> = {}): Pro
     role: 'standalone',
     deviceId: 'local',
     dataDir: path.resolve(process.cwd(), 'data'),
-    pollAccount: true,
     watchSessions: false,
     outbox: false,
-    sync: () => ({
-      role: runtime.role,
-      deviceId: runtime.deviceId,
-      devices: [],
-      settledThrough: null,
-      multiDevice: false
-    }),
     ...overrides
   };
   return runtime;
@@ -84,7 +62,7 @@ export function providerInfo(provider: Provider): ProviderInfo {
 }
 
 export function isProviderId(value: unknown): value is ProviderId {
-  return value === 'codex' || value === 'claude';
+  return value === 'codex';
 }
 
 export function debugEnabled(): boolean {

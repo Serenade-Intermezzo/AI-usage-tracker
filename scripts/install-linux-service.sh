@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Install (or reinstall) AI Usage Tracker as a systemd user service on Linux,
 # for the server or a collector. Run it from the checkout, as the user whose
-# ~/.codex and ~/.claude should be read, after `npm install && npm run build`
+# Codex GUI/CLI logs should be read, after `npm install && npm run build`
 # and after creating .env:
 #
 #   bash scripts/install-linux-service.sh

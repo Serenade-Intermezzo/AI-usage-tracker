@@ -13,8 +13,8 @@ function summary(overrides: Partial<ThreadPartSummary> = {}): ThreadPartSummary 
     projectPath: 'C:\\repo\\dashboard',
     startedAt: 1_000,
     updatedAt: 2_000,
-    primaryModel: 'claude-fable-5-1',
-    models: ['claude-fable-5-1'],
+    primaryModel: 'test-model-unpriced',
+    models: ['test-model-unpriced'],
     inputTokens: 1_000,
     cachedInputTokens: 600,
     cacheWriteInputTokens: 200,
@@ -36,7 +36,7 @@ function summary(overrides: Partial<ThreadPartSummary> = {}): ThreadPartSummary 
 
 test('stores per-provider parts with cache writes and provider-reported cost', () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'usage-store-'));
-  const store = createUsageStore({ file: 'test.sqlite', provider: 'claude', dataDir: directory });
+  const store = createUsageStore({ file: 'test.sqlite', provider: 'codex', dataDir: directory });
   try {
     store.replaceThreadData(summary(), [
       {
@@ -44,7 +44,7 @@ test('stores per-provider parts with cache writes and provider-reported cost', (
         threadId: 'thread-1',
         sourceFile: 'C:\\transcripts\\thread-1.jsonl',
         observedAt: 1_500,
-        model: 'claude-fable-5-1',
+        model: 'test-model-unpriced',
         inputTokens: 1_000,
         cachedInputTokens: 600,
         cacheWriteInputTokens: 200,
@@ -65,7 +65,7 @@ test('stores per-provider parts with cache writes and provider-reported cost', (
           threadId: 'thread-1',
           sourceFile: 'C:\\transcripts\\thread-1.jsonl#sidechain',
           observedAt: 1_600,
-          model: 'claude-fable-5-1',
+          model: 'test-model-unpriced',
           inputTokens: 250,
           cachedInputTokens: 0,
           cacheWriteInputTokens: 0,
@@ -107,12 +107,12 @@ test('stores per-provider parts with cache writes and provider-reported cost', (
     assert.equal(stats.peakDailyTokens, 1_400);
 
     store.insertRateLimitSnapshots([
-      { key: 'claude:seven-day', label: '7-day window', usedPercent: 40, windowDurationMins: 10_080, resetsAt: 9_000, observedAt: 100 },
-      { key: 'claude:seven-day-scoped:fable', label: '7-day Fable window', usedPercent: 70, windowDurationMins: 10_080, resetsAt: 9_001, observedAt: 100 }
+      { key: 'codex:seven-day', label: '7-day window', usedPercent: 40, windowDurationMins: 10_080, resetsAt: 9_000, observedAt: 100 },
+      { key: 'codex:seven-day-scoped:fable', label: '7-day Fable window', usedPercent: 70, windowDurationMins: 10_080, resetsAt: 9_001, observedAt: 100 }
     ]);
     assert.equal(store.getRateLimitHistory(10_080, undefined, 100_000).length, 2);
-    assert.equal(store.getRateLimitHistory(10_080, undefined, 100_000, ['claude:seven-day']).length, 1);
-    assert.equal(store.getLatestRateLimitSnapshot('claude:seven-day-scoped:fable')?.usedPercent, 70);
+    assert.equal(store.getRateLimitHistory(10_080, undefined, 100_000, ['codex:seven-day']).length, 1);
+    assert.equal(store.getLatestRateLimitSnapshot('codex:seven-day-scoped:fable')?.usedPercent, 70);
 
     store.removeSessionParts(['C:\\transcripts\\thread-1.jsonl', 'C:\\transcripts\\thread-1.jsonl#sidechain']);
     assert.equal(store.getThreadSummaries().length, 0);

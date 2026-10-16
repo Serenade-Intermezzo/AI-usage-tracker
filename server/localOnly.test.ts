@@ -11,9 +11,8 @@ test('local mode excludes shared-account caches and blocks quota endpoints and a
   process.env.LOCAL_ONLY = 'true';
   const provider = createCodexProvider({
     enabled: true, store,
-    runtime: standaloneRuntime({ dataDir: directory, pollAccount: true }),
-    rateLimitPollMs: 60000, accountUsagePollMs: 900000, sessionScanMs: 120000,
-    threadMetadataPollMs: 900000, cloudTaskPollMs: 600000, cloudTasksEnabled: true
+    runtime: standaloneRuntime({ dataDir: directory, scanLocal: false }),
+    sessionScanMs: 120000
   });
   try {
     const now = baseTime(0);
@@ -21,15 +20,10 @@ test('local mode excludes shared-account caches and blocks quota endpoints and a
     store.upsertAccountDailyUsage([{date: new Date().toISOString().slice(0, 10), tokens: 999999999, source: 'account'}]);
     const overview = provider.overview();
     assert.equal(overview.trackingScope, 'local');
-    assert.equal(overview.account.statsSource, 'local');
-    assert.equal(overview.account.lifetimeTokens, overview.totals.totalTokens);
-    assert.deepEqual(overview.accountDailyUsage, []);
-    assert.deepEqual(overview.histories, {fiveHour: [], sevenDay: []});
-    assert.deepEqual(overview.modelEfficiency, []);
-    assert.equal(overview.limits.fiveHour, null);
-    assert.equal(overview.cloudTasks.status, 'disabled');
-    assert.deepEqual(provider.windows(300), []);
-    assert.equal(provider.windowDetail(300, now + 3600), null);
+    assert.equal('account' in overview, false);
+    assert.equal('limits' in overview, false);
+    assert.equal('cloudTasks' in overview, false);
+    assert.equal(overview.totals.totalTokens, 0);
     assert.equal(provider.health().connected, false);
   } finally {
     provider.stop();

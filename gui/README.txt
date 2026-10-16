@@ -1,4 +1,4 @@
-Codex Usage Tracker 0.2.0 — Native Qt desktop GUI
+Codex Usage Tracker 0.2.1 — Native Qt desktop GUI
 
 The UI uses Qt Widgets, QFluentWidgets and Qt Charts; no browser or WebView.
 
@@ -7,7 +7,7 @@ Team workflow
 2. Set your member/device name. Enable connections from other devices if needed.
 3. Under 成员与设备 > 管理成员, add each person.
 4. Enter the reachable hub URL and generate that person's invitation.
-5. On each of their devices, open 设置 > 加入汇总中心 and paste that invitation.
+5. On each of their devices, open 设置与连接 > 加入汇总中心 and paste that invitation.
 6. Choose 本机, 全体成员 or a member in the main window.
 One person can connect many devices using the same invitation. Each installation
 keeps its own device identity; never copy device.json/data directories to another PC.

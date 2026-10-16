@@ -7,16 +7,7 @@ import type { TrackerRole } from './types.js';
 
 export type { TrackerRole };
 
-/**
- * How this installation takes part in multi-device tracking:
- *
- * - `standalone`: one machine, as before. Scans its own sessions, polls quota,
- *   serves the dashboard. No sync API.
- * - `server`: the central authority. Everything `standalone` does, plus it
- *   accepts usage events from collectors and attributes quota across devices.
- * - `collector`: scans local sessions and forwards events to the server through
- *   a durable outbox. It does not poll account quota or attribute anything.
- */
+/** Local-only collection, a team hub, or an offline-capable collector. */
 export const TRACKER_ROLES: TrackerRole[] = ['standalone', 'server', 'collector'];
 const DEVICE_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{0,63}$/i;
 
@@ -33,8 +24,6 @@ export interface SyncSettings {
   heartbeatMs: number;
   /** Longest wait between retries while the server is unreachable. */
   maxBackoffMs: number;
-  /** A collector silent for longer than this no longer holds history provisional. */
-  retireAfterDays: number;
 }
 
 export interface TrackerConfig {
@@ -48,8 +37,6 @@ export interface TrackerConfig {
   dataDir: string;
   /** Watch session folders for changes instead of waiting for the periodic scan. */
   watchSessions: boolean;
-  /** Poll account-level quota, account details, and cloud tasks. */
-  quotaPolling: boolean;
   sync: SyncSettings;
   memberId: string;
   memberName: string;
@@ -178,7 +165,6 @@ export function loadTrackerConfig(env: NodeJS.ProcessEnv = process.env): Tracker
     installId,
     dataDir,
     watchSessions: flagEnv(env, 'WATCH_SESSIONS', true),
-    quotaPolling: flagEnv(env, 'QUOTA_POLLING', role !== 'collector'),
     memberId: env.MEMBER_ID?.trim() || 'owner',
     memberName: env.MEMBER_NAME?.trim() || '本机用户',
     scanLocal: flagEnv(env, 'CODEX_SCAN', true),
@@ -190,8 +176,7 @@ export function loadTrackerConfig(env: NodeJS.ProcessEnv = process.env): Tracker
       batchSize: Math.min(5_000, Math.round(numberEnv(env, 'SYNC_BATCH_SIZE', 500))),
       debounceMs: numberEnv(env, 'SYNC_DEBOUNCE_MS', 2_500),
       heartbeatMs: numberEnv(env, 'SYNC_HEARTBEAT_MS', 90_000),
-      maxBackoffMs: numberEnv(env, 'SYNC_MAX_BACKOFF_MS', 300_000),
-      retireAfterDays: numberEnv(env, 'SYNC_DEVICE_RETIRE_DAYS', 30)
+      maxBackoffMs: numberEnv(env, 'SYNC_MAX_BACKOFF_MS', 300_000)
     }
   };
 }

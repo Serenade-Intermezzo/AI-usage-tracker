@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import type { DeviceStatus, ProviderId, TrackerRole } from '../types.js';
+import type { TrackerRole } from '../types.js';
 import type { CollectorStatusReport } from './protocol.js';
 
 export interface DeviceRow {
@@ -141,110 +141,3 @@ export function createDeviceRegistry(dataDir: string, file = 'sync.sqlite') {
 }
 
 export type DeviceRegistry = ReturnType<typeof createDeviceRegistry>;
-
-export interface SelfDevice {
-  deviceId: string;
-  label: string;
-  role: TrackerRole;
-  /** How far this machine's own logs are indexed, per provider. */
-  scannedThrough: (provider: ProviderId) => number | null;
-  providerEnabled: (provider: ProviderId) => boolean;
-}
-
-export interface DeviceStatusOptions {
-  heartbeatMs: number;
-  retireAfterDays: number;
-  now?: number;
-  /** Device ids that appear in stored events, so devices with history but no registry row still show up. */
-  knownDeviceIds?: Array<{ deviceId: string; lastEventAt: number | null }>;
-}
-
-const CLOCK_WARNING_SECONDS = 120;
-
-function formatOffset(seconds: number): string {
-  const absolute = Math.abs(Math.round(seconds));
-  return absolute >= 120 ? `${Math.round(absolute / 60)} min` : `${absolute} s`;
-}
-
-/**
- * Status of every device for one provider, and how far that provider's
- * attribution is settled: the earliest point any active device has not yet
- * delivered everything before. Windows ending later stay provisional.
- */
-export function deviceStatuses(
-  provider: ProviderId,
-  self: SelfDevice,
-  rows: DeviceRow[],
-  options: DeviceStatusOptions
-): { devices: DeviceStatus[]; settledThrough: number | null } {
-  const now = options.now ?? Math.floor(Date.now() / 1000);
-  const onlineWindow = Math.max(300, Math.round((options.heartbeatMs / 1000) * 3));
-  const retireBefore = now - options.retireAfterDays * 86_400;
-  const selfScanned = self.scannedThrough(provider);
-  const devices: DeviceStatus[] = [{
-    deviceId: self.deviceId,
-    label: self.label,
-    role: self.role,
-    self: true,
-    online: true,
-    lastSeenAt: now,
-    lastSyncAt: null,
-    pendingRecords: null,
-    syncedThrough: selfScanned,
-    clockOffsetSeconds: 0,
-    warning: null
-  }];
-  let settledThrough = self.providerEnabled(provider) ? selfScanned : now;
-
-  for (const row of rows) {
-    if (row.deviceId === self.deviceId) continue;
-    const providerStatus = row.status?.providers?.[provider];
-    const syncedThrough = providerStatus?.syncedThrough ?? null;
-    const warnings: string[] = [];
-    if (row.clockOffsetSeconds !== null && Math.abs(row.clockOffsetSeconds) > CLOCK_WARNING_SECONDS) {
-      warnings.push(`Clock is ${formatOffset(row.clockOffsetSeconds)} ${row.clockOffsetSeconds > 0 ? 'behind' : 'ahead of'} the server`);
-    }
-    if (row.installChangedAt !== null && now - row.installChangedAt < 86_400) {
-      warnings.push('A different installation is reporting with this device id; give each machine its own DEVICE_ID');
-    }
-    if (row.status?.lastError) warnings.push(row.status.lastError);
-    devices.push({
-      deviceId: row.deviceId,
-      label: row.label,
-      role: row.role,
-      self: false,
-      online: now - row.lastSeenAt <= onlineWindow,
-      lastSeenAt: row.lastSeenAt,
-      lastSyncAt: row.lastUploadAt,
-      pendingRecords: providerStatus?.pending ?? null,
-      syncedThrough,
-      clockOffsetSeconds: row.clockOffsetSeconds,
-      warning: warnings.length > 0 ? warnings.join('. ') : null
-    });
-    // A device that has been silent for weeks no longer holds history open.
-    const active = row.lastSeenAt >= retireBefore;
-    const reports = providerStatus?.enabled !== false;
-    if (active && reports && settledThrough !== null) {
-      settledThrough = syncedThrough === null ? null : Math.min(settledThrough, syncedThrough);
-    }
-  }
-
-  for (const known of options.knownDeviceIds ?? []) {
-    if (devices.some((device) => device.deviceId === known.deviceId)) continue;
-    devices.push({
-      deviceId: known.deviceId,
-      label: known.deviceId,
-      role: 'collector',
-      self: false,
-      online: false,
-      lastSeenAt: known.lastEventAt,
-      lastSyncAt: null,
-      pendingRecords: null,
-      syncedThrough: null,
-      clockOffsetSeconds: null,
-      warning: 'History from this device is stored, but it has not reported since this server started tracking devices'
-    });
-  }
-
-  return { devices, settledThrough };
-}

@@ -22,6 +22,7 @@ export function createTeam(options: {
   memberName: string; registry: DeviceRegistry; heartbeatMs: number;
   now?: () => number;
   selfScannedThrough?: () => number | null;
+  selfError?: () => string | null;
 }) {
   if (!validFingerprint(options.accountFingerprint)) throw new Error('多人统计需要有效的目标账号指纹。');
   const now = options.now ?? (() => Math.floor(Date.now() / 1000));
@@ -91,7 +92,7 @@ export function createTeam(options: {
         online: self || !!contact && timestamp - contact.lastSeenAt < Math.max(options.heartbeatMs / 1000 * 3, 30),
         pending: self ? 0 : provider?.pending ?? null,
         syncedThrough: self ? options.selfScannedThrough?.() ?? null : provider?.syncedThrough ?? null,
-        lastError: contact?.status?.lastError ?? null};
+        lastError: self ? options.selfError?.() ?? null : contact?.status?.lastError ?? null};
     });
     const summaries = people.map(m => {
       const r = aggregateReports(known.filter(e => owned.get(e.device) === m.id), day, timestamp);

@@ -1,9 +1,9 @@
 /** Which local coding agent a dashboard payload describes. */
-export type ProviderId = 'codex' | 'claude';
+export type ProviderId = 'codex';
 
 export interface ProviderInfo {
   id: ProviderId;
-  /** Product name, e.g. "Codex" or "Claude Code". */
+  /** Product name, "Codex". */
   label: string;
   /** False when the provider is turned off in configuration. */
   enabled: boolean;
@@ -34,23 +34,6 @@ export interface RateLimitWindow {
   windowDurationMins: number;
   resetsAt: number;
   observedAt: number;
-}
-
-export interface ProjectionPoint {
-  timestamp: number;
-  usedPercent: number;
-  projected?: boolean;
-  reset?: boolean;
-}
-
-export interface LimitProjection {
-  projectedPercentAtReset: number | null;
-  projectedExhaustionAt: number | null;
-  percentPerHour: number | null;
-  paceRatio: number | null;
-  confidence: 'low' | 'medium' | 'high' | 'unavailable';
-  samplesUsed: number;
-  resetEventsDetected: number;
 }
 
 export interface DailyUsage {
@@ -99,7 +82,7 @@ export interface ThreadPartSummary extends TokenUsage {
   threadId: string;
   /**
    * Stable, path-independent identity of the part: the Codex rollout file name,
-   * or the transcript path under Claude's projects folder. Defaults to
+   * Defaults to
    * `sourceFile` for callers that predate multi-device tracking.
    */
   partId?: string;
@@ -158,7 +141,7 @@ export interface ThreadSummary extends TokenUsage {
   reviewerTokens: number;
   subagentTokens: number;
   partCount: number;
-  /** Cost the provider itself recorded for the chat, when available (Claude Code writes one). */
+  /** Cost the provider itself recorded for the chat, when available. */
   reportedCostUsd: number | null;
   /** Devices whose logs contributed to this chat, normally exactly one. */
   deviceIds: string[];
@@ -169,18 +152,6 @@ export interface ThreadSummary extends TokenUsage {
   };
 }
 
-export interface ModelEfficiency {
-  model: string;
-  estimatedUsagePercent: number;
-  activeMinutes: number;
-  minutesPerPercent: number | null;
-  tokens: number;
-  tokensPerPercent: number | null;
-  estimatedApiCostUsd: number;
-  costPerPercent: number | null;
-  spans: number;
-}
-
 export interface ModelUsageSummary extends TokenUsage {
   model: string;
   threads: number;
@@ -188,129 +159,7 @@ export interface ModelUsageSummary extends TokenUsage {
   pricingStatus: PricingStatus;
 }
 
-export interface WindowActivityRun {
-  threadId: string;
-  startedAt: number;
-  completedAt: number;
-}
-
-export interface WindowThreadShare {
-  threadId: string;
-  title: string;
-  model: string;
-  percent: number;
-  coverage: number;
-  /** Portion of `percent` earned in quota rises shared with other chats. */
-  sharedPercent: number;
-  deviceIds: string[];
-}
-
-/** Where the current reset bank's usage came from. */
-export interface WindowBreakdown {
-  resetsAt: number;
-  windowStartsAt: number;
-  observedDeltaPercent: number;
-  attributedPercent: number;
-  unattributedPercent: number;
-  samples: number;
-  threads: WindowThreadShare[];
-  activity: WindowActivityRun[];
-  cloudTasksInWindow: number;
-  /** True while a collector has not yet synchronized past the end of this bank. */
-  provisional: boolean;
-}
-
-/** One chat's contribution to a single quota window (current or past). */
-export interface WindowSession {
-  threadId: string;
-  title: string;
-  model: string;
-  source: ThreadSource;
-  sourceLabel: string | null;
-  projectName: string | null;
-  deviceIds: string[];
-  percent: number;
-  sharedPercent: number;
-  coverage: number;
-  spans: number;
-  /** Tokens and API-equivalent cost logged inside this window only. */
-  tokens: number;
-  costUsd: number;
-  events: number;
-  firstEventAt: number | null;
-  lastEventAt: number | null;
-}
-
-/** One entry in the list of past and current quota windows. */
-export interface WindowSummary {
-  durationMins: number;
-  resetsAt: number;
-  windowStartsAt: number;
-  /** min(resetsAt, now): where the observed part of the window ends. */
-  endsAt: number;
-  current: boolean;
-  provisional: boolean;
-  /** Highest reported value in the window. */
-  peakPercent: number;
-  /** Last reported value in the window. */
-  finalPercent: number;
-  samples: number;
-  observedDeltaPercent: number;
-  attributedPercent: number;
-  unattributedPercent: number;
-  /** Chats with events or attributed usage in the window. */
-  sessionCount: number;
-  tokens: number;
-  costUsd: number;
-}
-
-export interface WindowDeviceShare {
-  deviceId: string;
-  percent: number;
-  tokens: number;
-  costUsd: number;
-}
-
-/** Everything the dashboard shows for one selected quota window. */
-export interface WindowDetail extends WindowSummary {
-  /** Attributed share of the observed rise, 0..1. */
-  coverage: number;
-  points: ProjectionPoint[];
-  sessions: WindowSession[];
-  activity: WindowActivityRun[];
-  devices: WindowDeviceShare[];
-}
-
 export type TrackerRole = 'standalone' | 'server' | 'collector';
-
-/** What the central server knows about one device that reports usage. */
-export interface DeviceStatus {
-  deviceId: string;
-  label: string;
-  role: TrackerRole;
-  /** True for the machine serving this dashboard. */
-  self: boolean;
-  online: boolean;
-  lastSeenAt: number | null;
-  lastSyncAt: number | null;
-  /** Records waiting in the device's outbox at its last report. */
-  pendingRecords: number | null;
-  /** Everything this device logged up to here has reached the server. */
-  syncedThrough: number | null;
-  /** Server clock minus device clock, seconds, at the last contact. */
-  clockOffsetSeconds: number | null;
-  warning: string | null;
-}
-
-export interface SyncOverview {
-  role: TrackerRole;
-  deviceId: string;
-  devices: DeviceStatus[];
-  /** Attribution before this time has every known device's events. */
-  settledThrough: number | null;
-  /** True once more than one device has reported usage. */
-  multiDevice: boolean;
-}
 
 export interface CloudTask {
   id: string;
@@ -348,57 +197,15 @@ export interface AccountSummary {
   } | null;
 }
 
-export type CloudTaskStatus = 'available' | 'unavailable' | 'disabled' | 'unsupported';
 
 export interface DashboardOverview {
   accountScope?: {enabled:boolean;boundAccount:string;monitoringSince:number;officialFiles:number;otherProviderFiles:number;otherAccountFiles:number;unverifiedFiles:number;otherSurfaceFiles:number;homes:Array<{label:string;matches:boolean}>;note:string;};
-  trackingScope?: 'local' | 'account';
+  trackingScope: 'local';
   provider: ProviderId;
   generatedAt: number;
-  connection: {
-    connected: boolean;
-    authType: string | null;
-    planType: string | null;
-    error: string | null;
-  };
-  account: AccountSummary;
-  limits: {
-    fiveHour: RateLimitWindow | null;
-    sevenDay: RateLimitWindow | null;
-    /** Additional windows the provider reports, such as model-specific weekly caps. */
-    other: RateLimitWindow[];
-    fiveHourStatus: 'available' | 'not-reported';
-  };
-  projections: {
-    fiveHour: LimitProjection;
-    sevenDay: LimitProjection;
-  };
-  histories: {
-    fiveHour: ProjectionPoint[];
-    sevenDay: ProjectionPoint[];
-  };
-  breakdown: {
-    fiveHour: WindowBreakdown | null;
-    sevenDay: WindowBreakdown | null;
-  };
-  accountDailyUsage: DailyUsage[];
   localDailyUsage: DailyUsage[];
-  /** Tokens by local weekday (0 = Sunday) and hour, last 30 days. */
   hourlyActivity: number[][];
-  totals: TokenUsage & {
-    threads: number;
-    estimatedApiCostUsd: number;
-    pricedThreads: number;
-    unknownPriceThreads: number;
-  };
+  totals: TokenUsage & {threads: number;estimatedApiCostUsd: number;pricedThreads: number;unknownPriceThreads: number};
   threads: ThreadSummary[];
-  modelEfficiency: ModelEfficiency[];
   modelUsage: ModelUsageSummary[];
-  cloudTasks: {
-    status: CloudTaskStatus;
-    checkedAt: number | null;
-    tasks: CloudTask[];
-  };
-  sync: SyncOverview;
-  notices: string[];
 }

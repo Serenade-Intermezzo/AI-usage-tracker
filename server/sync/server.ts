@@ -105,7 +105,7 @@ export function createSyncRouter(options: SyncRouterOptions): express.Router {
     catch (error) { response.status(409).json({error: (error as Error).message}); return; }
     const provider = body.provider;
     if (!isProviderId(provider)) {
-      response.status(400).json({ error: 'provider must be "codex" or "claude"' });
+      response.status(400).json({ error: 'provider must be "codex"' });
       return;
     }
     if (!options.stores[provider]) { response.status(400).json({error: 'This provider is disabled.'}); return; }
