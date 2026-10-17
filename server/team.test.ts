@@ -19,6 +19,33 @@ const SECRET = 'synthetic-team-test-secret-only';
 const at = (s: string) => Date.parse(s + '+08:00') / 1000;
 const sum = (r: any) => r.weekly.reduce((s: number, v: any) => s + v.total, 0);
 
+test('member edits preserve history, reject duplicate names, and only delete unused members', () => {
+  const root = tempDir('member-management');
+  const store = openStore(root, 'hub', {file: 'codex-usage.sqlite'});
+  const registry = createDeviceRegistry(root);
+  const team = createTeam({dataDir: root, accountFingerprint: FP,
+    self: {deviceId: 'hub', memberId: 'owner', installId: 'hub', label: 'Hub'},
+    memberName: 'Owner', registry, heartbeatMs: 1000});
+  try {
+    team.saveMember('Alice', 'alice');
+    assert.throws(() => team.saveMember(' alice ', 'another'), /同名/);
+    team.saveMember('Bob', 'bob');
+    team.removeMember('bob');
+    assert.ok(!team.members().some(m => m.id === 'bob'));
+    assert.throws(() => team.removeMember('owner'), /当前使用者/);
+    assert.throws(() => team.removeMember('missing'), /不存在/);
+    assert.throws(() => team.validateIdentity({deviceId:'b',memberId:'bob',installId:'b',accountFingerprint:FP}), /尚未登记/);
+    team.validateIdentity({deviceId:'a',memberId:'alice',installId:'a',accountFingerprint:FP});
+    store.ingestRemoteRecords('a', parsed([{kind:'event', key:'used', data:remoteEvent('used','thread',Math.floor(Date.now()/1000)-60,null,1234)}]));
+    assert.throws(() => team.removeMember('alice'), /关联设备/);
+    team.saveMember('Alice renamed', 'alice');
+    assert.equal(sum(team.report('alice')), 1234);
+    assert.equal(team.devices().find(d => d.deviceId === 'a')?.memberId, 'alice');
+    const archive = JSON.parse(fs.readFileSync(path.join(root,'team-reports.json'),'utf8'));
+    assert.ok(!archive.byMember.bob, 'deleted unused member must not survive in snapshots');
+  } finally { team.close(); registry.close(); store.close(); removeDir(root); }
+});
+
 test('team reports combine many devices per member, preserve ownership, and share monthly boundaries', () => {
   const root = tempDir('team-report');
   const store = openStore(root, 'hub', {file: 'codex-usage.sqlite'});
@@ -145,6 +172,9 @@ test('real entry points sync two members and three scanner devices, block other 
     const alice=(await json(hub.url,'/api/team/members',{name:'Alice'},'POST')).value;
     const bob=(await json(hub.url,'/api/team/members',{name:'Bob'},'POST')).value;
     assert.ok(alice.id && bob.id);
+    const empty=(await json(hub.url,'/api/team/members',{name:'Unused'},'POST')).value;
+    assert.equal((await json(hub.url,`/api/team/members/${empty.id}`,undefined,'DELETE')).status,200);
+    assert.equal((await json(hub.url,`/api/team/members/${empty.id}`,undefined,'DELETE')).status,400);
     assert.equal((await json(hub.url,'/api/team/settings',{monthStartDay:16})).status,200);
     const invitation=(await json(hub.url,`/api/team/invitation?memberId=${alice.id}&url=${encodeURIComponent(hub.url)}`)).value.invitation;
     const invitationData=JSON.parse(Buffer.from(invitation,'base64url').toString());
@@ -157,6 +187,7 @@ test('real entry points sync two members and three scanner devices, block other 
     }
     const report=await until(async () => {const r=(await json(hub!.url,'/api/team/reports')).value;return sum(r)===6000 && !r.incomplete ? r : null;});
     assert.equal(report.members.find((m:any) => m.id===alice.id).devices,2);
+    assert.equal((await json(hub.url,`/api/team/members/${alice.id}`,undefined,'DELETE')).status,400);
     assert.equal(sum((await json(hub.url,`/api/team/reports?memberId=${alice.id}`)).value),3000);
     assert.equal(sum((await json(devices[0].url,`/api/team/reports?memberId=${bob.id}`)).value),3000);
     assert.equal((await json(devices[0].url,'/api/overview?provider=codex')).status,200);
@@ -211,6 +242,7 @@ test('network-facing hub requires a key and cannot expose local administration o
     assert.equal(team.status,200);assert.equal(team.value.canManage,false);
     assert.equal((await json(url,'/api/overview',undefined,undefined,auth)).status,403);
     assert.equal((await json(url,'/api/team/members',{name:'intruder'},'POST',auth)).status,403);
+    assert.equal((await json(url,'/api/team/members/owner',undefined,'DELETE',auth)).status,403);
     assert.equal((await json(url,'/api/team/settings',{monthStartDay:1},'PUT',auth)).status,403);
     assert.equal((await json(url,'/api/installation',{},'PUT',auth)).status,403);
   } finally {await server?.stop(); removeDir(root);}

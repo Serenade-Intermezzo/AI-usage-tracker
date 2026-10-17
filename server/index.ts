@@ -224,6 +224,7 @@ app.get('/api/team', async (request, response) => {
   try {
     if (isCollector) { response.json({...await centralGet('/api/team'), role: 'collector', canManage: false, sync: syncClient?.status()}); return; }
     response.json({enabled: !!team, role: config.role, members: team?.members() ?? [],
+      acceptsRemote: !!team && ['0.0.0.0', '::'].includes(host),
       accountFingerprint: team?.fingerprint ?? null, canManage: !!team && loopback(request), selfMemberId: config.memberId, sync: null});
   } catch (error) { response.status(503).json({error: '汇总中心连接失败：' + (error as Error).message, sync: syncClient?.status()}); }
 });
@@ -254,6 +255,12 @@ app.post('/api/team/members', (request, response) => {
     if (request.body?.id && !team.members().some(m => m.id === request.body.id)) throw new Error('成员不存在。');
     response.json(team.saveMember(request.body?.name, request.body?.id));
   } catch (error) { response.status(400).json({error: (error as Error).message}); }
+});
+app.delete('/api/team/members/:id', (request, response) => {
+  if (!localAdmin(request, response)) return;
+  if (!team) { response.status(403).json({error: '请在汇总中心管理成员。'}); return; }
+  try { team.removeMember(String(request.params.id)); response.json({ok: true}); }
+  catch (error) { response.status(400).json({error: (error as Error).message}); }
 });
 app.get('/api/team/invitation', (request, response) => {
   if (!localAdmin(request, response)) return;

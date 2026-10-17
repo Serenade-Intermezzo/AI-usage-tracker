@@ -566,13 +566,19 @@ class NativeTests(unittest.TestCase):
         fixture = {
             "members": [{"id": "alice", "name": "Alice"}, {"id": "bob", "name": "Bob"}]
         }
+        def member_api(_url, path, *args):
+            if path == "/api/team":
+                return fixture
+            if path == "/api/team/reports":
+                return {"members": [], "devices": []}
+            return {"invitation": "synthetic-invitation"}
         with patch(
             "gui.team.api",
-            side_effect=[fixture, {"invitation": "synthetic-invitation"}],
+            side_effect=member_api,
         ) as calls:
             d = gui.MembersDialog(self.url)
             self.addCleanup(d.close)
-            d.members.setCurrentIndex(d.members.findData("bob"))
+            d.select_member("bob")
             d.address.setText("http://192.168.1.10:8893")
             d.copy_invitation()
             self.assertIn("memberId=bob", calls.call_args.args[1])

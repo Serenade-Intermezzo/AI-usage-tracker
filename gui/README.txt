@@ -1,4 +1,4 @@
-Codex Usage Tracker 0.2.2 — Native Qt desktop GUI
+Codex Usage Tracker 0.3.0 — Native Qt desktop GUI
 
 The UI uses Qt Widgets, QFluentWidgets and Qt Charts; no browser or WebView.
 
@@ -7,6 +7,15 @@ Use the upper-right minimize, maximize/restore and close buttons. F11 toggles
 full screen; Esc restores the previous normal or maximized state. Small/HiDPI
 displays scroll page content instead of forcing the window beyond the screen.
 Charts include a team usage-share pie with monthly, weekly and lifetime views.
+
+Tailscale onboarding
+Open 成员与设备 > Tailscale 连接 to detect, install and connect the official
+client. Complete OS authorization and browser login yourself. Every participant
+needs approved network membership or a shared hub device, plus a separate tracker
+invitation. Member management detects the hub address and copies setup steps.
+The join dialog tests connectivity, member identity and the pinned account.
+Search people, inspect devices, rename without losing history, or delete unused
+members. Members with devices and the current hub user cannot be deleted.
 
 Team workflow
 1. Install on one computer, open 设置, and choose 作为汇总中心.

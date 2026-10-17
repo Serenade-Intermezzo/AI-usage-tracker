@@ -45,3 +45,6 @@ jobs:
             if ($parseErrors.Count) { throw ($parseErrors | Out-String) }
           }
           & ./scripts/install-native-windows.ps1 -NoLaunch -SkipShortcuts
+      - name: Linux Tailscale installer syntax
+        if: runner.os == 'Linux'
+        run: sh -n scripts/install-tailscale-linux.sh

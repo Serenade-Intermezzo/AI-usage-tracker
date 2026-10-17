@@ -15,6 +15,7 @@ from PyQt5.QtWidgets import (
 from qfluentwidgets import TableWidget as FluentTable
 from .team import ConnectionDialog, MembersDialog
 from .ui import build_window
+from .tailscale import NetworkDialog
 from .utils import DEFAULT_URL, compact, period_end
 
 
@@ -136,9 +137,11 @@ class UsageWindow(QMainWindow):
 
     def update_status(self):
         if self.request_errors:
-            self.status.setText("连接暂时中断")
+            central_error = any(str(error).startswith("汇总中心") for error in self.request_errors.values())
+            self.status.setText("汇总中心连接中断" if central_error else "连接暂时中断")
             self.coverage_notice.setText(
-                "暂时无法更新 · 当前保留上次收到的数据，恢复连接后自动刷新。"
+                "本机用量会保留待上传。请到“成员与设备 → Tailscale 连接”检查网络，并确认中心仍在运行。"
+                if central_error else "暂时无法更新 · 当前保留上次收到的数据，恢复连接后自动刷新。"
             )
             self.hint.setText("更新失败：" + next(iter(self.request_errors.values())))
             return
@@ -579,6 +582,9 @@ class UsageWindow(QMainWindow):
             self.refresh()
         except Exception as error:
             QMessageBox.warning(self, "成员管理", str(error))
+
+    def configure_network(self):
+        NetworkDialog(QUrl(self.url).port(8893), self).exec_()
 
     def toggle_details(self, expanded: bool):
         self.details.setVisible(expanded)

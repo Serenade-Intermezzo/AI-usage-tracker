@@ -39,11 +39,21 @@ export function createTeam(options: {
   function members(): Member[] { return db.prepare('SELECT id, name FROM members ORDER BY name, id').all() as unknown as Member[]; }
   function saveMember(name: unknown, id = crypto.randomUUID() as string): Member {
     if (!validId(id) || typeof name !== 'string' || !name.trim() || name.trim().length > 80) throw new Error('成员名称需为 1–80 个字符。');
+    if (members().some(m => m.id !== id && m.name.toLocaleLowerCase() === name.trim().toLocaleLowerCase())) {
+      throw new Error('已有同名成员，请使用不同的姓名或昵称。');
+    }
     db.prepare('INSERT INTO members VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET name=excluded.name').run(id, name.trim());
     return {id, name: name.trim()};
   }
   function devices(): TeamDevice[] {
     return db.prepare('SELECT device_id AS deviceId, member_id AS memberId, install_id AS installId, label FROM team_devices ORDER BY device_id').all() as unknown as TeamDevice[];
+  }
+  function removeMember(id: string): void {
+    if (!members().some(m => m.id === id)) throw new Error('成员不存在。');
+    if (id === options.self?.memberId) throw new Error('不能删除汇总中心当前使用者。');
+    if (devices().some(d => d.memberId === id)) throw new Error('该成员已关联设备，请保留其成员和历史归属；可以修改姓名。');
+    db.prepare('DELETE FROM members WHERE id = ?').run(id);
+    archive();
   }
   function enroll(device: TeamDevice): void {
     if (!validId(device.deviceId) || !validId(device.memberId) || !device.installId || device.installId.length > 100) throw new Error('成员或设备标识无效。');
@@ -108,7 +118,7 @@ export function createTeam(options: {
   function archive(): void {
     atomicJson(path.join(options.dataDir, 'team-reports.json'), {all: report(), byMember: Object.fromEntries(members().map(m => [m.id, report(m.id)]))});
   }
-  return {members, saveMember, devices, validateIdentity, report, archive, monthDay, setMonthDay,
+  return {members, saveMember, removeMember, devices, validateIdentity, report, archive, monthDay, setMonthDay,
     fingerprint: options.accountFingerprint, close: () => db.close()};
 }
 
